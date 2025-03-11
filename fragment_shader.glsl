@@ -39,11 +39,8 @@ void main()
     vec3 result = (ambient + diffuse + specular + emission) * texture(texture1, TexCoords).rgb;
     FragColor = texture(texture1, TexCoords);
 
-    if (FragColor.r > 0.05f)
-        FragColor.r *= 5.0f;
-
     float brightness = dot(FragColor.rgb, vec3(0.2126f, 0.7152f, 0.0722f));
-    if (brightness > 0.15f)
+    if (brightness > 0.05f)
         BloomColor = vec4(FragColor.rgb, 1.0f);
     else
         BloomColor = vec4(0.0f, 0.0f, 0.0f, 1.0f);
