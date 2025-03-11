@@ -35,13 +35,12 @@ void main()
     // emission
     vec3 emission = texture(texture1, TexCoords).rgb * emissionStrength;
 
+    // Store linearized depth in alpha
+    float near = 0.1;
+    float far = 1000.0;
+    float linearDepth = (2.0 * near) / (far + near - gl_FragCoord.z * (far - near));
+
     // final color
     vec3 result = (ambient + diffuse + specular + emission) * texture(texture1, TexCoords).rgb;
-    FragColor = vec4(result, 1.0f);
-
-    float brightness = dot(FragColor.rgb, vec3(0.2126f, 0.7152f, 0.0722f));
-    if (emissionStrength > 0)
-        BloomColor = vec4(FragColor.rgb * emissionStrength, 1.0f);
-    else
-        BloomColor = vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    FragColor = vec4(result, linearDepth);
 }
