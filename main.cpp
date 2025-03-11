@@ -270,6 +270,9 @@ int main() {
 
     // Enable depth test
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);     // Only render front-facing triangles
+    glFrontFace(GL_CCW);  
 
     // Load shaders
     GLuint shaderProgram = createShaderProgram("vertex_shader.glsl", "fragment_shader.glsl");
@@ -436,26 +439,8 @@ int main() {
         );
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 100.0f);
 
-        // Draw skybox first (before binding the post-processing framebuffer)
         glBindFramebuffer(GL_FRAMEBUFFER, postProcessingFBO);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        glDepthFunc(GL_LEQUAL);  // Change depth function to pass when depth values are equal
-        glUseProgram(skyboxShader);
-        glm::mat4 skyView = glm::mat4(glm::mat3(view)); // Remove translation from view matrix
-        glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "view"), 1, GL_FALSE, glm::value_ptr(skyView));
-        glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-
-        // Bind cubemap
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
-        glUniform1i(glGetUniformLocation(skyboxShader, "skybox"), 0);
-
-        // Draw skybox
-        glBindVertexArray(skyboxVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-        glBindVertexArray(0);
-        glDepthFunc(GL_LESS); // Reset depth function
         
         // Use shader program
         glUseProgram(shaderProgram);
@@ -503,22 +488,47 @@ int main() {
         // THIRD PASS: Final render to the screen
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        
-        // Use framebuffer program for final composite
+
+        // FIRST: Draw skybox as background
+        glDepthFunc(GL_LEQUAL);  
+        glUseProgram(skyboxShader);
+        glm::mat4 skyView = glm::mat4(glm::mat3(view)); // Remove translation
+        glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "view"), 1, GL_FALSE, glm::value_ptr(skyView));
+        glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+        // Bind cubemap
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+        glUniform1i(glGetUniformLocation(skyboxShader, "skybox"), 0);
+
+        // Draw skybox
+        glBindVertexArray(skyboxVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+        glBindVertexArray(0);
+        glDepthFunc(GL_LESS); // Reset depth function
+
+        // SECOND: Now render the post-processed sun on top
         glUseProgram(framebufferProgram); 
-        
+
+        // Enable blending for the sun to composite over the skybox
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         // Bind both textures - original scene and bloom
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, postProcessingTexture);  // Scene
         glUniform1i(glGetUniformLocation(framebufferProgram, "scene"), 0);
-        
+
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, pingpongBuffer[!horizontal]);  // Blurred bloom
         glUniform1i(glGetUniformLocation(framebufferProgram, "bloomBlur"), 1);
-        
-        // Render a full screen quad with both textures
+
+        // Render the quad with sun+bloom
         renderQuad();
-        
+
+        // Disable blending when done
+        glDisable(GL_BLEND);
+
         // Swap buffers
         glfwSwapBuffers(window);
         
