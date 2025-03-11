@@ -12,11 +12,6 @@ void main()
     vec3 fragment = texture(scene, texCoords).rgb;
     vec3 bloom = texture(bloomBlur, texCoords).rgb;
     
-    // Skip completely black pixels to let skybox show through
-    if (length(fragment) < 0.01 && length(bloom) < 0.01) {
-        discard; // Don't write this pixel
-    }
-    
     vec3 color = fragment + bloom;
 
     float exposure = 0.8f;
