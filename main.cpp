@@ -172,6 +172,7 @@ void createSphere(float radius, int sectorCount, int stackCount, std::vector<flo
         xy = radius * cosf(stackAngle);             // r * cos(u)
         z = radius * sinf(stackAngle);              // r * sin(u)
 
+        // Add an extra vertex at the end of each ring to fix the texture seam
         for(int j = 0; j <= sectorCount; ++j) {
             sectorAngle = j * sectorStep;           // starting from 0 to 2pi
 
@@ -189,18 +190,10 @@ void createSphere(float radius, int sectorCount, int stackCount, std::vector<flo
             vertices.push_back(nx);
             vertices.push_back(ny);
             vertices.push_back(nz);
+            
 
-            // Improved texture mapping with pole correction
             s = (float)j / sectorCount;
             t = (float)i / stackCount;
-
-            // Apply pole correction
-            if (i < stackCount * 0.15 || i > stackCount * 0.85) {
-                // Reduce distortion near poles
-                float poleCorrection = 0.5f + 0.5f * sin(M_PI * (float)i / stackCount);
-                s = 0.5f + (s - 0.5f) * poleCorrection;
-            }
-            
             vertices.push_back(s);
             vertices.push_back(t);
         }
@@ -320,7 +313,7 @@ int main() {
     glGenerateMipmap(GL_TEXTURE_2D);
 
     // For longitude (around the sphere)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     // For latitude (from pole to pole)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -583,6 +576,8 @@ int main() {
         glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), 0);
         model = glm::mat4(1.0f);
         model = glm::translate(model, glm::vec3(2.0f, 0.0f, 0.0f));
+        model = glm::rotate(model, 3.1415f/2, glm::vec3(1.0f, 0, 0));
+        model = glm::rotate(model, 3.1415f, glm::vec3(0, 1.0f, 0));
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, earthTexture);
