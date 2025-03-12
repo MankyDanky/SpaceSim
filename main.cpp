@@ -172,6 +172,7 @@ void createSphere(float radius, int sectorCount, int stackCount, std::vector<flo
         xy = radius * cosf(stackAngle);             // r * cos(u)
         z = radius * sinf(stackAngle);              // r * sin(u)
 
+        // Add an extra vertex at the end of each ring to fix the texture seam
         for(int j = 0; j <= sectorCount; ++j) {
             sectorAngle = j * sectorStep;           // starting from 0 to 2pi
 
@@ -189,18 +190,10 @@ void createSphere(float radius, int sectorCount, int stackCount, std::vector<flo
             vertices.push_back(nx);
             vertices.push_back(ny);
             vertices.push_back(nz);
+            
 
-            // Improved texture mapping with pole correction
             s = (float)j / sectorCount;
             t = (float)i / stackCount;
-
-            // Apply pole correction
-            if (i < stackCount * 0.15 || i > stackCount * 0.85) {
-                // Reduce distortion near poles
-                float poleCorrection = 0.5f + 0.5f * sin(M_PI * (float)i / stackCount);
-                s = 0.5f + (s - 0.5f) * poleCorrection;
-            }
-            
             vertices.push_back(s);
             vertices.push_back(t);
         }
@@ -276,8 +269,8 @@ int main() {
 
     // Load shaders
     GLuint shaderProgram = createShaderProgram("vertex_shader.glsl", "fragment_shader.glsl");
-    GLuint framebufferProgram = createShaderProgram("framebuffer.vert", "framebuffer.frag");
-    GLuint blurProgram = createShaderProgram("framebuffer.vert", "blur.frag");
+    GLuint blurProgram = createShaderProgram("finalComposite.vert", "blur.frag");
+    GLuint finalCompositeProgram = createShaderProgram("finalComposite.vert", "finalComposite.frag");
 
     // Load skybox shader
     GLuint skyboxShader = createShaderProgram("skybox.vert", "skybox.frag");
@@ -296,7 +289,7 @@ int main() {
     };
     unsigned int cubemapTexture = loadCubemap(faces);
 
-    // Load texture
+    // Load sun texture
     int texWidth, texHeight, texChannels;
     unsigned char* data = stbi_load("sun.jpg", &texWidth, &texHeight, &texChannels, 0);
     if (!data) {
@@ -304,10 +297,40 @@ int main() {
         return -1;
     }
 
-    GLuint texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
+    GLuint sunTexture;
+    glGenTextures(1, &sunTexture);
+    glBindTexture(GL_TEXTURE_2D, sunTexture);
     GLenum format;
+    if (texChannels == 1)
+        format = GL_RED;
+    else if (texChannels == 3)
+        format = GL_RGB;
+    else if (texChannels == 4)
+        format = GL_RGBA;
+        
+
+    glTexImage2D(GL_TEXTURE_2D, 0, format, texWidth, texHeight, 0, format, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    // For longitude (around the sphere)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    // For latitude (from pole to pole)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    stbi_image_free(data);
+
+    // Load earth texture
+    data = stbi_load("earth.jpg", &texWidth, &texHeight, &texChannels, 0);
+    if (!data) {
+        std::cerr << "Failed to load texture" << std::endl;
+        return -1;
+    }
+
+    unsigned int earthTexture;
+    glGenTextures(1, &earthTexture);
+    glBindTexture(GL_TEXTURE_2D, earthTexture);
     if (texChannels == 1)
         format = GL_RED;
     else if (texChannels == 3)
@@ -325,12 +348,17 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    stbi_image_free(data);
-
     // Create Frame Buffer Object
     unsigned int postProcessingFBO;
     glGenFramebuffers(1, &postProcessingFBO);
     glBindFramebuffer(GL_FRAMEBUFFER, postProcessingFBO);
+
+    // Add a depth renderbuffer to the postProcessingFBO
+    unsigned int rbo;
+    glGenRenderbuffers(1, &rbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo);
 
     // Create Framebuffer Texture
     unsigned int postProcessingTexture;
@@ -354,6 +382,27 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, bloomTexture, 0);
 
+    // Create a dedicated skybox framebuffer
+    unsigned int skyboxFBO;
+    unsigned int skyboxTexture;
+    glGenFramebuffers(1, &skyboxFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, skyboxFBO);
+
+    // Create color texture for skybox - use sRGB format
+    glGenTextures(1, &skyboxTexture);
+    glBindTexture(GL_TEXTURE_2D, skyboxTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, skyboxTexture, 0);
+
+    // Check skybox framebuffer status
+    auto skyboxFboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (skyboxFboStatus != GL_FRAMEBUFFER_COMPLETE)
+        std::cout << "Skybox Framebuffer error: " << skyboxFboStatus << std::endl;
+
     // Tell OpenGL we need to draw to both attachments
     unsigned int attachments[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
     glDrawBuffers(2, attachments);
@@ -372,22 +421,21 @@ int main() {
     {
         glBindFramebuffer(GL_FRAMEBUFFER, pingpongFBO[i]);
         glBindTexture(GL_TEXTURE_2D, pingpongBuffer[i]);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        
+        // IMPORTANT: Use RGBA16F to match your bloom texture
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
+        
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  // Use LINEAR for better blur
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);  // Use LINEAR for better blur
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pingpongBuffer[i], 0);
-
-        fboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        if (fboStatus != GL_FRAMEBUFFER_COMPLETE)
-            std::cout << "Ping-Pong Framebuffer error: " << fboStatus << std::endl;
     }
 
-    // Create sphere
-    std::vector<float> vertices;
-    std::vector<unsigned int> indices;
-    createSphere(1.0f, 36, 18, vertices, indices);
+    // Create sun sphere
+    std::vector<float> sunVertices;
+    std::vector<unsigned int> sunIndices;
+    createSphere(1.0f, 36, 18, sunVertices, sunIndices);
 
     // Create VAO, VBO, and EBO for sphere
     GLuint VAO, VBO, EBO;
@@ -398,10 +446,10 @@ int main() {
     glBindVertexArray(VAO);
 
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sunVertices.size() * sizeof(float), &sunVertices[0], GL_STATIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sunIndices.size() * sizeof(unsigned int), &sunIndices[0], GL_STATIC_DRAW);
 
     // Vertex positions
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
@@ -414,6 +462,40 @@ int main() {
     glEnableVertexAttribArray(2);
 
     glBindVertexArray(0);
+
+    // Create earth sphere
+    std::vector<float> earthVertices;
+    std::vector<unsigned int> earthIndices;
+    createSphere(0.2f, 36, 18, earthVertices, earthIndices);
+
+    // Create VAO, VBO, and EBO for earth
+    GLuint earthVAO, earthVBO, earthEBO;
+    glGenVertexArrays(1, &earthVAO);
+    glGenBuffers(1, &earthVBO);
+    glGenBuffers(1, &earthEBO);
+
+    glBindVertexArray(earthVAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, earthVBO);
+    glBufferData(GL_ARRAY_BUFFER, earthVertices.size() * sizeof(float), &earthVertices[0], GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, earthEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, earthIndices.size() * sizeof(unsigned int), &earthIndices[0], GL_STATIC_DRAW);
+
+    // Vertex positions
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    // Vertex normals
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    // Vertex texture coords
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+
+    glBindVertexArray(0);
+
+    glEnable(GL_DEPTH_TEST);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
     // Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -439,31 +521,72 @@ int main() {
         );
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 100.0f);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, postProcessingFBO);
+        // PASS 1A: Draw skybox to its own framebuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, skyboxFBO);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        
-        // Use shader program
+
+        // Draw skybox
+        glDepthFunc(GL_LEQUAL);
+        glUseProgram(skyboxShader);
+        glm::mat4 skyView = glm::mat4(glm::mat3(view)); // Remove translation
+        glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "view"), 1, GL_FALSE, glm::value_ptr(skyView));
+        glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+        glUniform1i(glGetUniformLocation(skyboxShader, "skybox"), 0);
+        glBindVertexArray(skyboxVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+        glBindVertexArray(0);
+        glDepthFunc(GL_LESS);
+
+
+        // PASS 1B: Draw sun to HDR framebuffer with bloom extraction
+        glBindFramebuffer(GL_FRAMEBUFFER, postProcessingFBO);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f); // Alpha = 0.0 indicates "no object"
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // You MUST reset this every time after binding a different framebuffer
+        unsigned int attachments[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+        glDrawBuffers(2, attachments); // This is critical!
+
+        // Then draw the sun...
         glUseProgram(shaderProgram);
         
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         
-        glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 0.0f, 0.0f, 5.0f);
+        glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 0.0f, 0.0f, 0.0f);
         glUniform3f(glGetUniformLocation(shaderProgram, "viewPos"), camX, camY, camZ);
         glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
         glUniform1f(glGetUniformLocation(shaderProgram, "ambientStrength"), 0.1f);
-        glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), 0.5f);
+        glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), 1.5f);
         
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture);  // Bind the actual sun texture
+        glBindTexture(GL_TEXTURE_2D, sunTexture);  // Bind the actual sun texture
         glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
         
         // Render sphere TO THE FRAMEBUFFER (this populates both attached textures)
         glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_TRIANGLES, sunIndices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
         
+        // Draw earth
+        glUseProgram(shaderProgram);
+        glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), 0);
+        model = glm::mat4(1.0f);
+        model = glm::translate(model, glm::vec3(2.0f, 0.0f, 0.0f));
+        model = glm::rotate(model, 3.1415f/2, glm::vec3(1.0f, 0, 0));
+        model = glm::rotate(model, 3.1415f, glm::vec3(0, 1.0f, 0));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, earthTexture);
+        glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
+        glBindVertexArray(earthVAO);
+        glDrawElements(GL_TRIANGLES, earthIndices.size(), GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+
+
         // SECOND PASS: Blur the bloom texture using ping-pong
         bool horizontal = true, first_iteration = true;
         int amount = 10;
@@ -484,50 +607,29 @@ int main() {
             if (first_iteration)
                 first_iteration = false;
         }
-        
+
+
         // THIRD PASS: Final render to the screen
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glUseProgram(finalCompositeProgram);
 
-        // FIRST: Draw skybox as background
-        glDepthFunc(GL_LEQUAL);  
-        glUseProgram(skyboxShader);
-        glm::mat4 skyView = glm::mat4(glm::mat3(view)); // Remove translation
-        glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "view"), 1, GL_FALSE, glm::value_ptr(skyView));
-        glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-
-        // Bind cubemap
+        // Bind all three textures
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
-        glUniform1i(glGetUniformLocation(skyboxShader, "skybox"), 0);
-
-        // Draw skybox
-        glBindVertexArray(skyboxVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-        glBindVertexArray(0);
-        glDepthFunc(GL_LESS); // Reset depth function
-
-        // SECOND: Now render the post-processed sun on top
-        glUseProgram(framebufferProgram); 
-
-        // Enable blending for the sun to composite over the skybox
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        // Bind both textures - original scene and bloom
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, postProcessingTexture);  // Scene
-        glUniform1i(glGetUniformLocation(framebufferProgram, "scene"), 0);
+        glBindTexture(GL_TEXTURE_2D, skyboxTexture);
+        glUniform1i(glGetUniformLocation(finalCompositeProgram, "skyboxTex"), 0);
 
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, pingpongBuffer[!horizontal]);  // Blurred bloom
-        glUniform1i(glGetUniformLocation(framebufferProgram, "bloomBlur"), 1);
+        glBindTexture(GL_TEXTURE_2D, postProcessingTexture);
+        glUniform1i(glGetUniformLocation(finalCompositeProgram, "sunTex"), 1);
 
-        // Render the quad with sun+bloom
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, pingpongBuffer[!horizontal]);
+        glUniform1i(glGetUniformLocation(finalCompositeProgram, "bloomTex"), 2);
+
+        // Render final composite quad
         renderQuad();
 
-        // Disable blending when done
-        glDisable(GL_BLEND);
 
         // Swap buffers
         glfwSwapBuffers(window);
@@ -541,7 +643,7 @@ int main() {
     glDeleteBuffers(1, &VBO);
     glDeleteBuffers(1, &EBO);
     glDeleteProgram(shaderProgram);
-    glDeleteTextures(1, &texture);
+    glDeleteTextures(1, &sunTexture);
     glDeleteVertexArrays(1, &quadVAO);
     glDeleteBuffers(1, &quadVBO);
     glDeleteVertexArrays(1, &skyboxVAO);
