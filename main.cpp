@@ -11,6 +11,14 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+int SCR_WIDTH = 800;
+int SCR_HEIGHT = 600;
+
+unsigned int postProcessingFBO, rbo;
+unsigned int postProcessingTexture, bloomTexture;
+unsigned int skyboxFBO, skyboxTexture;
+unsigned int pingpongFBO[2], pingpongBuffer[2];
+
 float deltaTime = 0.0f;	// Time between current frame and last frame
 float lastFrame = 0.0f; // Time of last frame
 
@@ -29,8 +37,85 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 
+void recreateFramebuffers(int width, int height) {
+    // Clean up existing framebuffers and textures
+    glDeleteFramebuffers(1, &postProcessingFBO);
+    glDeleteRenderbuffers(1, &rbo);
+    glDeleteTextures(1, &postProcessingTexture);
+    glDeleteTextures(1, &bloomTexture);
+    glDeleteFramebuffers(1, &skyboxFBO);
+    glDeleteTextures(1, &skyboxTexture);
+    glDeleteFramebuffers(2, pingpongFBO);
+    glDeleteTextures(2, pingpongBuffer);
+    
+    
+
+    // Create Frame Buffer Object
+    glGenFramebuffers(1, &postProcessingFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, postProcessingFBO);
+    
+    glGenRenderbuffers(1, &rbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo);
+
+    // Create main color texture
+    glGenTextures(1, &postProcessingTexture);
+    glBindTexture(GL_TEXTURE_2D, postProcessingTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, postProcessingTexture, 0);
+    
+    // Create bloom texture
+    glGenTextures(1, &bloomTexture);
+    glBindTexture(GL_TEXTURE_2D, bloomTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, bloomTexture, 0);
+    
+    // Create skybox framebuffer
+    glGenFramebuffers(1, &skyboxFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, skyboxFBO);
+    
+    // Create skybox texture
+    glGenTextures(1, &skyboxTexture);
+    glBindTexture(GL_TEXTURE_2D, skyboxTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, skyboxTexture, 0);
+    
+    // Create ping-pong framebuffers for bloom
+    glGenFramebuffers(2, pingpongFBO);
+    glGenTextures(2, pingpongBuffer);
+    for (unsigned int i = 0; i < 2; i++) {
+        glBindFramebuffer(GL_FRAMEBUFFER, pingpongFBO[i]);
+        glBindTexture(GL_TEXTURE_2D, pingpongBuffer[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pingpongBuffer[i], 0);
+    }
+}
+
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+    // Update the global dimensions
+    SCR_WIDTH = width;
+    SCR_HEIGHT = height;
     glViewport(0, 0, width, height);
+    
+    // Recreate framebuffers with new size (call this function we'll define below)
+    recreateFramebuffers(width, height);
 }
 
 unsigned int skyboxVAO = 0, skyboxVBO = 0;
@@ -484,91 +569,9 @@ int main() {
     planets.push_back(new Planet(0.33f, 17.0f, 0.8f, 0.0137f, 0.0f, 0.0f, uranusTexture));
     planets.push_back(new Planet(0.3f, 30.0f, 0.9f, 0.007f, 0.0f, 0.0f, neptuneTexture));
 
-    // Create Frame Buffer Object
-    unsigned int postProcessingFBO;
-    glGenFramebuffers(1, &postProcessingFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, postProcessingFBO);
 
-    // Add a depth renderbuffer to the postProcessingFBO
-    unsigned int rbo;
-    glGenRenderbuffers(1, &rbo);
-    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo);
-
-    // Create Framebuffer Texture
-    unsigned int postProcessingTexture;
-    glGenTextures(1, &postProcessingTexture);
-    glBindTexture(GL_TEXTURE_2D, postProcessingTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, postProcessingTexture, 0);
-    printf("Post Processing Texture: %d\n", postProcessingTexture);
-
-    // Create Second Framebuffer Texture
-    unsigned int bloomTexture;
-    glGenTextures(1, &bloomTexture);
-    glBindTexture(GL_TEXTURE_2D, bloomTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, bloomTexture, 0);
-    printf("Bloom Texture: %d\n", bloomTexture);
-
-    // Create a dedicated skybox framebuffer
-    unsigned int skyboxFBO;
-    unsigned int skyboxTexture;
-    glGenFramebuffers(1, &skyboxFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, skyboxFBO);
-
-    // Create color texture for skybox - use sRGB format
-    glGenTextures(1, &skyboxTexture);
-    glBindTexture(GL_TEXTURE_2D, skyboxTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, skyboxTexture, 0);
-
-    // Check skybox framebuffer status
-    auto skyboxFboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    if (skyboxFboStatus != GL_FRAMEBUFFER_COMPLETE)
-        std::cout << "Skybox Framebuffer error: " << skyboxFboStatus << std::endl;
-
-    // Tell OpenGL we need to draw to both attachments
-    unsigned int attachments[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-    glDrawBuffers(2, attachments);
-
-    // Error checking framebuffer
-    auto fboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    if (fboStatus != GL_FRAMEBUFFER_COMPLETE)
-    std::cout << "Post-Processing Framebuffer error: " << fboStatus << std::endl;
-
-    // Create Ping Pong Framebuffers for repetitive blurring
-    unsigned int pingpongFBO[2];
-    unsigned int pingpongBuffer[2];
-    glGenFramebuffers(2, pingpongFBO);
-    glGenTextures(2, pingpongBuffer);
-    for (unsigned int i = 0; i < 2; i++)
-    {
-        glBindFramebuffer(GL_FRAMEBUFFER, pingpongFBO[i]);
-        glBindTexture(GL_TEXTURE_2D, pingpongBuffer[i]);
-        
-        // IMPORTANT: Use RGBA16F to match your bloom texture
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
-        
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  // Use LINEAR for better blur
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);  // Use LINEAR for better blur
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pingpongBuffer[i], 0);
-    }
+    glfwGetFramebufferSize(window, &SCR_WIDTH, &SCR_HEIGHT);
+    recreateFramebuffers(SCR_WIDTH, SCR_HEIGHT);
 
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -595,7 +598,9 @@ int main() {
             glm::vec3(0.0f, 0.0f, 0.0f),    // Look target (sun center)
             glm::vec3(0.0f, 1.0f, 0.0f)     // Up vector
         );
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 1000.0f);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 
+                                      (float)SCR_WIDTH / (float)SCR_HEIGHT, 
+                                      0.1f, 1000.0f);
 
         // PASS 1A: Draw skybox to its own framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, skyboxFBO);
