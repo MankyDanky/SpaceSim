@@ -222,6 +222,178 @@ void createSphere(float radius, int sectorCount, int stackCount, std::vector<flo
     }
 }
 
+GLuint loadTexture(const std::string& path) {
+    // Debug output
+    std::cout << "Loading texture: " << path << std::endl;
+    
+    // Load image data
+    int width, height, channels;
+    unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
+    
+    if (!data) {
+        std::cerr << "Failed to load texture: " << path << std::endl;
+        std::cerr << "Reason: " << stbi_failure_reason() << std::endl;
+        
+        // Create a default color texture for missing files
+        unsigned char defaultColor[4] = {255, 0, 0, 255}; // Red
+        GLuint textureID;
+        glGenTextures(1, &textureID);
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, defaultColor);
+        return textureID;
+    }
+    
+    // Determine format based on channels
+    GLenum format;
+    if (channels == 1)
+        format = GL_RED;
+    else if (channels == 3)
+        format = GL_RGB;
+    else if (channels == 4)
+        format = GL_RGBA;
+    else {
+        std::cerr << "Unsupported number of channels: " << channels << std::endl;
+        stbi_image_free(data);
+        return 0;
+    }
+    
+    // Create and configure texture
+    GLuint textureID;
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    
+    // Load data into texture
+    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    
+    // Set texture parameters
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    
+    // Free image data
+    stbi_image_free(data);
+    
+    std::cout << "Texture loaded with ID: " << textureID << std::endl;
+    return textureID;
+}
+
+// Replace the empty Planet class with this implementation
+class Planet {
+    public:
+        // Member variables
+        GLuint VAO, VBO, EBO;
+        GLuint texture;
+        float radius;
+        float orbitRadius;
+        float rotationSpeed;
+        float orbitalSpeed;
+        float axialTilt;
+        float emissionStrength;
+        glm::vec3 position;
+        unsigned int indexCount;
+        
+        // Constructor
+        Planet(float radius, float orbitRadius, float rotationSpeed, float orbitalSpeed, 
+               float axialTilt, float emissionStrength, GLuint texture) 
+            : radius(radius), orbitRadius(orbitRadius), rotationSpeed(rotationSpeed),
+              orbitalSpeed(orbitalSpeed), axialTilt(axialTilt), emissionStrength(emissionStrength),
+              position(glm::vec3(orbitRadius, 0.0f, 0.0f)), texture(texture) {
+            
+            // Create sphere geometry
+            std::vector<float> vertices;
+            std::vector<unsigned int> indices;
+            createSphere(radius, 36, 18, vertices, indices);
+            indexCount = indices.size();
+            
+            // Create VAO, VBO, and EBO
+            glGenVertexArrays(1, &VAO);
+            glGenBuffers(1, &VBO);
+            glGenBuffers(1, &EBO);
+            
+            glBindVertexArray(VAO);
+            
+            glBindBuffer(GL_ARRAY_BUFFER, VBO);
+            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
+            
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
+            
+            // Vertex positions
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+            // Vertex normals
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+            glEnableVertexAttribArray(1);
+            // Vertex texture coords
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+            glEnableVertexAttribArray(2);
+            
+            glBindVertexArray(0);
+            
+            std::cout << "Planet created: VAO=" << VAO << ", texture=" << texture << ", indices=" << indexCount << std::endl;
+        }
+        
+        // Destructor
+        ~Planet() {
+            glDeleteVertexArrays(1, &VAO);
+            glDeleteBuffers(1, &VBO);
+            glDeleteBuffers(1, &EBO);
+            glDeleteTextures(1, &texture);
+        }
+        
+        // Update planet position based on orbit
+        void update(float currentTime) {
+            // Update position based on orbital movement
+            float angle = currentTime * orbitalSpeed;
+            position.x = cosf(angle) * orbitRadius;
+            position.z = sinf(angle) * orbitRadius;
+        }
+        
+        // Draw planet
+        void draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection, 
+                  glm::vec3 viewPos, glm::vec3 lightPos) {
+
+            glUseProgram(shaderProgram);
+            
+            // Set emission strength (for sun vs planets)
+            glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), emissionStrength);
+            
+            // Create model matrix
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, position);
+            
+            // Apply axial tilt
+            model = glm::rotate(model, glm::radians(axialTilt), glm::vec3(0.0f, 0.0f, 1.0f));
+            
+            // Apply self-rotation
+            float rotation = glfwGetTime() * rotationSpeed;
+            model = glm::rotate(model, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+            
+            // Set uniforms
+            glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            
+            // Set lighting uniforms
+            glUniform3fv(glGetUniformLocation(shaderProgram, "lightPos"), 1, glm::value_ptr(lightPos));
+            glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, glm::value_ptr(viewPos));
+            glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
+            glUniform1f(glGetUniformLocation(shaderProgram, "ambientStrength"), 0.1f);
+            
+            // Bind texture
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
+            
+            // Draw planet
+            glBindVertexArray(VAO);
+            glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+        }
+};
+
 int main() {
     // Initialize GLFW
     if (!glfwInit()) {
@@ -271,12 +443,13 @@ int main() {
     GLuint shaderProgram = createShaderProgram("vertex_shader.glsl", "fragment_shader.glsl");
     GLuint blurProgram = createShaderProgram("finalComposite.vert", "blur.frag");
     GLuint finalCompositeProgram = createShaderProgram("finalComposite.vert", "finalComposite.frag");
-
-    // Load skybox shader
     GLuint skyboxShader = createShaderProgram("skybox.vert", "skybox.frag");
 
     // Setup skybox
     setupSkybox();
+
+    // Vector to hold pointers to planets
+    std::vector<Planet*> planets; // std::vector<Planet> planets;
 
     // Load cubemap textures for skybox
     std::vector<std::string> faces {
@@ -289,64 +462,27 @@ int main() {
     };
     unsigned int cubemapTexture = loadCubemap(faces);
 
-    // Load sun texture
-    int texWidth, texHeight, texChannels;
-    unsigned char* data = stbi_load("sun.jpg", &texWidth, &texHeight, &texChannels, 0);
-    if (!data) {
-        std::cerr << "Failed to load texture" << std::endl;
-        return -1;
-    }
+    // Load planet texture
+    GLuint sunTexture = loadTexture("sun.jpg");
+    GLuint mercuryTexture = loadTexture("mercury.jpg");
+    GLuint venusTexture = loadTexture("venus.jpg");
+    GLuint earthTexture = loadTexture("earth.jpg");
+    GLuint marsTexture = loadTexture("mars.jpg");
+    GLuint jupiterTexture = loadTexture("jupiter.jpg");
+    GLuint saturnTexture = loadTexture("saturn.jpg");
+    GLuint uranusTexture = loadTexture("uranus.jpg");
+    GLuint neptuneTexture = loadTexture("neptune.jpg");
 
-    GLuint sunTexture;
-    glGenTextures(1, &sunTexture);
-    glBindTexture(GL_TEXTURE_2D, sunTexture);
-    GLenum format;
-    if (texChannels == 1)
-        format = GL_RED;
-    else if (texChannels == 3)
-        format = GL_RGB;
-    else if (texChannels == 4)
-        format = GL_RGBA;
-        
-
-    glTexImage2D(GL_TEXTURE_2D, 0, format, texWidth, texHeight, 0, format, GL_UNSIGNED_BYTE, data);
-    glGenerateMipmap(GL_TEXTURE_2D);
-
-    // For longitude (around the sphere)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    // For latitude (from pole to pole)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    stbi_image_free(data);
-
-    // Load earth texture
-    data = stbi_load("earth.jpg", &texWidth, &texHeight, &texChannels, 0);
-    if (!data) {
-        std::cerr << "Failed to load texture" << std::endl;
-        return -1;
-    }
-
-    unsigned int earthTexture;
-    glGenTextures(1, &earthTexture);
-    glBindTexture(GL_TEXTURE_2D, earthTexture);
-    if (texChannels == 1)
-        format = GL_RED;
-    else if (texChannels == 3)
-        format = GL_RGB;
-    else if (texChannels == 4)
-        format = GL_RGBA;
-
-    glTexImage2D(GL_TEXTURE_2D, 0, format, texWidth, texHeight, 0, format, GL_UNSIGNED_BYTE, data);
-    glGenerateMipmap(GL_TEXTURE_2D);
-
-    // For longitude (around the sphere)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    // For latitude (from pole to pole)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // Create planets
+    planets.push_back(new Planet(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.5f, sunTexture));
+    planets.push_back(new Planet(0.1f, 2.0f, 0.3f, 4.77f, 0.0f, 0.0f, mercuryTexture));
+    planets.push_back(new Planet(0.19f, 2.75f, 0.5f, 1.87f, 0.0f, 0.0f, venusTexture));
+    planets.push_back(new Planet(0.2f, 3.0f, 0.5f, 1.15f, 0.0f, 0.0f, earthTexture));
+    planets.push_back(new Planet(0.15f, 3.8f, 0.4f, 0.61f, 0.0f, 0.0f, marsTexture));
+    planets.push_back(new Planet(0.7f, 7.0f, 0.6f, 0.097f, 0.0f, 0.0f, jupiterTexture));
+    planets.push_back(new Planet(0.63f, 10.0f, 0.7f, 0.039f, 0.0f, 0.0f, saturnTexture));
+    planets.push_back(new Planet(0.33f, 17.0f, 0.8f, 0.0137f, 0.0f, 0.0f, uranusTexture));
+    planets.push_back(new Planet(0.3f, 30.0f, 0.9f, 0.007f, 0.0f, 0.0f, neptuneTexture));
 
     // Create Frame Buffer Object
     unsigned int postProcessingFBO;
@@ -370,6 +506,7 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, postProcessingTexture, 0);
+    printf("Post Processing Texture: %d\n", postProcessingTexture);
 
     // Create Second Framebuffer Texture
     unsigned int bloomTexture;
@@ -381,6 +518,7 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, bloomTexture, 0);
+    printf("Bloom Texture: %d\n", bloomTexture);
 
     // Create a dedicated skybox framebuffer
     unsigned int skyboxFBO;
@@ -432,68 +570,6 @@ int main() {
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pingpongBuffer[i], 0);
     }
 
-    // Create sun sphere
-    std::vector<float> sunVertices;
-    std::vector<unsigned int> sunIndices;
-    createSphere(1.0f, 36, 18, sunVertices, sunIndices);
-
-    // Create VAO, VBO, and EBO for sphere
-    GLuint VAO, VBO, EBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
-
-    glBindVertexArray(VAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sunVertices.size() * sizeof(float), &sunVertices[0], GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sunIndices.size() * sizeof(unsigned int), &sunIndices[0], GL_STATIC_DRAW);
-
-    // Vertex positions
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    // Vertex normals
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    // Vertex texture coords
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-
-    glBindVertexArray(0);
-
-    // Create earth sphere
-    std::vector<float> earthVertices;
-    std::vector<unsigned int> earthIndices;
-    createSphere(0.2f, 36, 18, earthVertices, earthIndices);
-
-    // Create VAO, VBO, and EBO for earth
-    GLuint earthVAO, earthVBO, earthEBO;
-    glGenVertexArrays(1, &earthVAO);
-    glGenBuffers(1, &earthVBO);
-    glGenBuffers(1, &earthEBO);
-
-    glBindVertexArray(earthVAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, earthVBO);
-    glBufferData(GL_ARRAY_BUFFER, earthVertices.size() * sizeof(float), &earthVertices[0], GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, earthEBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, earthIndices.size() * sizeof(unsigned int), &earthIndices[0], GL_STATIC_DRAW);
-
-    // Vertex positions
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    // Vertex normals
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    // Vertex texture coords
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-
-    glBindVertexArray(0);
-
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
@@ -519,7 +595,7 @@ int main() {
             glm::vec3(0.0f, 0.0f, 0.0f),    // Look target (sun center)
             glm::vec3(0.0f, 1.0f, 0.0f)     // Up vector
         );
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 100.0f);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 1000.0f);
 
         // PASS 1A: Draw skybox to its own framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, skyboxFBO);
@@ -565,27 +641,17 @@ int main() {
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, sunTexture);  // Bind the actual sun texture
         glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
-        
-        // Render sphere TO THE FRAMEBUFFER (this populates both attached textures)
-        glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, sunIndices.size(), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-        
-        // Draw earth
-        glUseProgram(shaderProgram);
-        glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), 0);
-        model = glm::mat4(1.0f);
-        model = glm::translate(model, glm::vec3(2.0f, 0.0f, 0.0f));
-        model = glm::rotate(model, 3.1415f/2, glm::vec3(1.0f, 0, 0));
-        model = glm::rotate(model, 3.1415f, glm::vec3(0, 1.0f, 0));
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, earthTexture);
-        glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
-        glBindVertexArray(earthVAO);
-        glDrawElements(GL_TRIANGLES, earthIndices.size(), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
 
+        // Update and draw all planets
+        float currentTime = glfwGetTime();
+        glm::vec3 lightPos(0.0f, 0.0f, 0.0f); // Sun position at origin
+
+        for (size_t i = 0; i < planets.size(); i++) {
+            planets[i]->update(currentTime);
+            planets[i]->draw(shaderProgram, view, projection, 
+                        glm::vec3(camX, camY, camZ), // Camera position
+                        lightPos);                   // Light position
+        }
 
         // SECOND PASS: Blur the bloom texture using ping-pong
         bool horizontal = true, first_iteration = true;
@@ -639,9 +705,6 @@ int main() {
     }
 
     // Clean up and exit
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
     glDeleteProgram(shaderProgram);
     glDeleteTextures(1, &sunTexture);
     glDeleteVertexArrays(1, &quadVAO);
@@ -649,7 +712,10 @@ int main() {
     glDeleteVertexArrays(1, &skyboxVAO);
     glDeleteBuffers(1, &skyboxVBO);
     glDeleteTextures(1, &cubemapTexture);
-
+    for (Planet* planet : planets) {
+        delete planet;
+    }
+    planets.clear();
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
@@ -715,8 +781,8 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     // Clamp distance to prevent getting too close or too far
     if (cameraDistance < 3.0f)
         cameraDistance = 3.0f;  // Minimum distance
-    if (cameraDistance > 20.0f)
-        cameraDistance = 20.0f;  // Maximum distance
+    if (cameraDistance > 100.0f)
+        cameraDistance = 100.0f;  // Maximum distance
 }
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
@@ -765,3 +831,4 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     if (pitch > 89.0f) pitch = 89.0f;
     if (pitch < -89.0f) pitch = -89.0f;
 }
+
