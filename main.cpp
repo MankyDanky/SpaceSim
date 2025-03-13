@@ -14,6 +14,45 @@
 int SCR_WIDTH = 800;
 int SCR_HEIGHT = 600;
 
+int focusedPlanetIndex = -1; // Default is -1 (sun)
+bool followingPlanet = false;
+
+glm::mat4 currentView;
+glm::mat4 currentProjection;
+
+// Forward declaration for the Planet class
+class Planet {
+    public:
+        // Member variables
+        GLuint VAO, VBO, EBO;
+        GLuint texture;
+        float radius;
+        float orbitRadius;
+        float rotationSpeed;
+        float orbitalSpeed;
+        float axialTilt;
+        float emissionStrength;
+        glm::vec3 position;
+        unsigned int indexCount;
+        
+        // Constructor
+        Planet(float radius, float orbitRadius, float rotationSpeed, float orbitalSpeed, 
+               float axialTilt, float emissionStrength, GLuint texture);
+        
+        // Destructor
+        ~Planet();
+        
+        // Update planet position based on orbit
+        void update(float currentTime);
+        
+        // Draw planet
+        void draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection, 
+                  glm::vec3 viewPos, glm::vec3 lightPos);
+    };
+
+// Vector to hold pointers to planets
+std::vector<Planet*> planets; // std::vector<Planet> planets;
+
 unsigned int postProcessingFBO, rbo;
 unsigned int postProcessingTexture, bloomTexture;
 unsigned int skyboxFBO, skyboxTexture;
@@ -307,6 +346,71 @@ void createSphere(float radius, int sectorCount, int stackCount, std::vector<flo
     }
 }
 
+// Add this function after createSphere
+bool ray_sphere_intersection(const glm::vec3& rayOrigin, const glm::vec3& rayDir, 
+    const glm::vec3& sphereCenter, float sphereRadius,
+    float& t) {
+glm::vec3 oc = rayOrigin - sphereCenter;
+float a = glm::dot(rayDir, rayDir);
+float b = 2.0f * glm::dot(oc, rayDir);
+float c = glm::dot(oc, oc) - sphereRadius * sphereRadius;
+float discriminant = b*b - 4*a*c;
+
+if (discriminant < 0) {
+return false;
+} else {
+t = (-b - sqrt(discriminant)) / (2.0f * a);
+return t > 0;
+}
+}
+
+// Function to find which planet was clicked
+int findClickedPlanet(GLFWwindow* window, const glm::mat4& view, const glm::mat4& projection,
+const std::vector<Planet*>& planets) {
+// Get mouse position
+double mouseX, mouseY;
+glfwGetCursorPos(window, &mouseX, &mouseY);
+
+// Convert screen coordinates to normalized device coordinates
+int windowWidth, windowHeight;
+glfwGetWindowSize(window, &windowWidth, &windowHeight);
+float x = (2.0f * mouseX) / windowWidth - 1.0f;
+float y = 1.0f - (2.0f * mouseY) / windowHeight;
+
+// Create ray in NDC space
+glm::vec4 rayStart = glm::vec4(x, y, -1.0f, 1.0f);
+glm::vec4 rayEnd = glm::vec4(x, y, 0.0f, 1.0f);
+
+// Convert to world space
+glm::mat4 inverseViewProj = glm::inverse(projection * view);
+glm::vec4 worldRayStart = inverseViewProj * rayStart;
+worldRayStart /= worldRayStart.w;
+glm::vec4 worldRayEnd = inverseViewProj * rayEnd;
+worldRayEnd /= worldRayEnd.w;
+
+// Calculate ray direction
+glm::vec3 rayOrigin = glm::vec3(worldRayStart);
+glm::vec3 rayDir = glm::normalize(glm::vec3(worldRayEnd - worldRayStart));
+
+// Check intersection with each planet
+int closestPlanet = -1;
+float closestT = FLT_MAX;
+
+for (int i = 0; i < planets.size(); i++) {
+float t;
+if (ray_sphere_intersection(rayOrigin, rayDir, 
+           planets[i]->position, 
+           planets[i]->radius, t)) {
+if (t < closestT) {
+closestT = t;
+closestPlanet = i;
+}
+}
+}
+
+return closestPlanet;
+}
+
 GLuint loadTexture(const std::string& path) {
     // Debug output
     std::cout << "Loading texture: " << path << std::endl;
@@ -363,121 +467,106 @@ GLuint loadTexture(const std::string& path) {
     std::cout << "Texture loaded with ID: " << textureID << std::endl;
     return textureID;
 }
-
-// Replace the empty Planet class with this implementation
-class Planet {
-    public:
-        // Member variables
-        GLuint VAO, VBO, EBO;
-        GLuint texture;
-        float radius;
-        float orbitRadius;
-        float rotationSpeed;
-        float orbitalSpeed;
-        float axialTilt;
-        float emissionStrength;
-        glm::vec3 position;
-        unsigned int indexCount;
         
-        // Constructor
-        Planet(float radius, float orbitRadius, float rotationSpeed, float orbitalSpeed, 
-               float axialTilt, float emissionStrength, GLuint texture) 
-            : radius(radius), orbitRadius(orbitRadius), rotationSpeed(rotationSpeed),
-              orbitalSpeed(orbitalSpeed), axialTilt(axialTilt), emissionStrength(emissionStrength),
-              position(glm::vec3(orbitRadius, 0.0f, 0.0f)), texture(texture) {
-            
-            // Create sphere geometry
-            std::vector<float> vertices;
-            std::vector<unsigned int> indices;
-            createSphere(radius, 36, 18, vertices, indices);
-            indexCount = indices.size();
-            
-            // Create VAO, VBO, and EBO
-            glGenVertexArrays(1, &VAO);
-            glGenBuffers(1, &VBO);
-            glGenBuffers(1, &EBO);
-            
-            glBindVertexArray(VAO);
-            
-            glBindBuffer(GL_ARRAY_BUFFER, VBO);
-            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
-            
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
-            
-            // Vertex positions
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-            glEnableVertexAttribArray(0);
-            // Vertex normals
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-            glEnableVertexAttribArray(1);
-            // Vertex texture coords
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-            glEnableVertexAttribArray(2);
-            
-            glBindVertexArray(0);
-            
-            std::cout << "Planet created: VAO=" << VAO << ", texture=" << texture << ", indices=" << indexCount << std::endl;
-        }
+// Constructor
+Planet::Planet(float radius, float orbitRadius, float rotationSpeed, float orbitalSpeed, 
+        float axialTilt, float emissionStrength, GLuint texture) 
+    : radius(radius), orbitRadius(orbitRadius), rotationSpeed(rotationSpeed),
+        orbitalSpeed(orbitalSpeed), axialTilt(axialTilt), emissionStrength(emissionStrength),
+        position(glm::vec3(orbitRadius, 0.0f, 0.0f)), texture(texture) {
+    
+    // Create sphere geometry
+    std::vector<float> vertices;
+    std::vector<unsigned int> indices;
+    createSphere(radius, 36, 18, vertices, indices);
+    indexCount = indices.size();
+    
+    // Create VAO, VBO, and EBO
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+    
+    glBindVertexArray(VAO);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
+    
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
+    
+    // Vertex positions
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    // Vertex normals
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    // Vertex texture coords
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    
+    glBindVertexArray(0);
+    
+    std::cout << "Planet created: VAO=" << VAO << ", texture=" << texture << ", indices=" << indexCount << std::endl;
+}
         
         // Destructor
-        ~Planet() {
-            glDeleteVertexArrays(1, &VAO);
-            glDeleteBuffers(1, &VBO);
-            glDeleteBuffers(1, &EBO);
-            glDeleteTextures(1, &texture);
-        }
-        
-        // Update planet position based on orbit
-        void update(float currentTime) {
-            // Update position based on orbital movement
-            float angle = currentTime * orbitalSpeed;
-            position.x = cosf(angle) * orbitRadius;
-            position.z = sinf(angle) * orbitRadius;
-        }
-        
-        // Draw planet
-        void draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection, 
-                  glm::vec3 viewPos, glm::vec3 lightPos) {
+Planet::~Planet() {
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &EBO);
+    glDeleteTextures(1, &texture);
+}
 
-            glUseProgram(shaderProgram);
-            
-            // Set emission strength (for sun vs planets)
-            glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), emissionStrength);
-            
-            // Create model matrix
-            glm::mat4 model = glm::mat4(1.0f);
-            model = glm::translate(model, position);
-            
-            // Apply axial tilt
-            model = glm::rotate(model, glm::radians(axialTilt), glm::vec3(0.0f, 0.0f, 1.0f));
-            
-            // Apply self-rotation
-            float rotation = glfwGetTime() * rotationSpeed;
-            model = glm::rotate(model, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
-            
-            // Set uniforms
-            glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-            glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            
-            // Set lighting uniforms
-            glUniform3fv(glGetUniformLocation(shaderProgram, "lightPos"), 1, glm::value_ptr(lightPos));
-            glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, glm::value_ptr(viewPos));
-            glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
-            glUniform1f(glGetUniformLocation(shaderProgram, "ambientStrength"), 0.1f);
-            
-            // Bind texture
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, texture);
-            glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
-            
-            // Draw planet
-            glBindVertexArray(VAO);
-            glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
-            glBindVertexArray(0);
-        }
-};
+// Update planet position based on orbit
+void Planet::update(float currentTime) {
+    // Update position based on orbital movement
+    float angle = currentTime * orbitalSpeed;
+    position.x = cosf(angle) * orbitRadius;
+    position.z = sinf(angle) * orbitRadius;
+}
+
+// Draw planet
+void Planet::draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection, 
+            glm::vec3 viewPos, glm::vec3 lightPos) {
+
+    glUseProgram(shaderProgram);
+    
+    // Set emission strength (for sun vs planets)
+    glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), emissionStrength);
+    
+    // Create model matrix
+    glm::mat4 model = glm::mat4(1.0f);
+    model = glm::translate(model, position);
+    
+    // Apply axial tilt
+    model = glm::rotate(model, glm::radians(axialTilt), glm::vec3(0.0f, 0.0f, 1.0f));
+    
+    // Apply self-rotation
+    float rotation = glfwGetTime() * rotationSpeed;
+    model = glm::rotate(model, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+    
+    // Set uniforms
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+    
+    // Set lighting uniforms
+    glUniform3fv(glGetUniformLocation(shaderProgram, "lightPos"), 1, glm::value_ptr(lightPos));
+    glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, glm::value_ptr(viewPos));
+    glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
+    glUniform1f(glGetUniformLocation(shaderProgram, "ambientStrength"), 0.1f);
+    
+    // Bind texture
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
+    
+    // Draw planet
+    glBindVertexArray(VAO);
+    glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+}
+
 
 int main() {
     // Initialize GLFW
@@ -533,9 +622,6 @@ int main() {
     // Setup skybox
     setupSkybox();
 
-    // Vector to hold pointers to planets
-    std::vector<Planet*> planets; // std::vector<Planet> planets;
-
     // Load cubemap textures for skybox
     std::vector<std::string> faces {
         "stars/right.png",
@@ -588,19 +674,28 @@ int main() {
         // Set uniforms (same as before)
         glm::mat4 model = glm::mat4(1.0f);
         // Calculate camera position using spherical coordinates
-        float camX = sin(glm::radians(yaw)) * cos(glm::radians(pitch)) * cameraDistance;
-        float camY = sin(glm::radians(pitch)) * cameraDistance;
-        float camZ = cos(glm::radians(yaw)) * cos(glm::radians(pitch)) * cameraDistance;
+        // Get orbit center (sun or focused planet)
+        glm::vec3 orbitCenter(0.0f);
+        if (followingPlanet && focusedPlanetIndex >= 0 && focusedPlanetIndex < planets.size()) {
+            orbitCenter = planets[focusedPlanetIndex]->position;
+        }
 
-        // Create view matrix looking at the origin
+        // Calculate camera position using spherical coordinates around the orbit center
+        float camX = orbitCenter.x + sin(glm::radians(yaw)) * cos(glm::radians(pitch)) * cameraDistance;
+        float camY = orbitCenter.y + sin(glm::radians(pitch)) * cameraDistance;
+        float camZ = orbitCenter.z + cos(glm::radians(yaw)) * cos(glm::radians(pitch)) * cameraDistance;
+
+        // Create view matrix looking at the orbit center
         glm::mat4 view = glm::lookAt(
             glm::vec3(camX, camY, camZ),    // Camera position
-            glm::vec3(0.0f, 0.0f, 0.0f),    // Look target (sun center)
+            orbitCenter,                    // Look target (planet or sun)
             glm::vec3(0.0f, 1.0f, 0.0f)     // Up vector
         );
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), 
                                       (float)SCR_WIDTH / (float)SCR_HEIGHT, 
                                       0.1f, 1000.0f);
+        currentView = view;
+        currentProjection = projection;
 
         // PASS 1A: Draw skybox to its own framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, skyboxFBO);
@@ -790,18 +885,47 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
         cameraDistance = 100.0f;  // Maximum distance
 }
 
+// Update your mouse_button_callback
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    static glm::mat4 lastView;
+    static glm::mat4 lastProjection;
+    
+    // Store view and projection matrices for click detection
+    extern glm::mat4 currentView;
+    extern glm::mat4 currentProjection;
+    
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
+            // If right control or command is held, select planet instead of orbiting
+            if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || 
+                glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || 
+                glfwGetKey(window, GLFW_KEY_LEFT_SUPER) == GLFW_PRESS) {
+                int clickedPlanet = findClickedPlanet(window, currentView, currentProjection, planets);
+                if (clickedPlanet >= 0) {
+                    focusedPlanetIndex = clickedPlanet;
+                    followingPlanet = true;
+                    std::cout << "Now focusing on planet " << clickedPlanet << std::endl;
+                } else {
+                    std::cout << "No target found" << std::endl;
+                }
+                return;
+            }
+            
+            // Normal orbit behavior
             orbitActive = true;
             firstMouse = true;
-            // Capture cursor for better control
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         } else if (action == GLFW_RELEASE) {
             orbitActive = false;
-            // Release cursor
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
+    }
+    
+    // Reset focus to sun with right click
+    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
+        focusedPlanetIndex = -1;
+        followingPlanet = false;
+        std::cout << "Now focusing on sun" << std::endl;
     }
 }
 
