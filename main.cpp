@@ -15,6 +15,7 @@ int SCR_WIDTH = 800;
 int SCR_HEIGHT = 600;
 
 int focusedPlanetIndex = -1; // Default is -1 (sun)
+int hoveredPlanetIndex = -1; // Default is -1 (no planet)
 bool followingPlanet = false;
 
 glm::mat4 currentView;
@@ -54,6 +55,8 @@ class Planet {
         // Draw planet
         void draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection, 
                   glm::vec3 viewPos, glm::vec3 lightPos);
+        
+        void drawOutline(GLuint shaderProgram);
     };
 
 // Vector to hold pointers to planets
@@ -92,6 +95,7 @@ void recreateFramebuffers(int width, int height) {
     glDeleteTextures(1, &skyboxTexture);
     glDeleteFramebuffers(2, pingpongFBO);
     glDeleteTextures(2, pingpongBuffer);
+
     
     
 
@@ -101,8 +105,8 @@ void recreateFramebuffers(int width, int height) {
     
     glGenRenderbuffers(1, &rbo);
     glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
 
     // Create main color texture
     glGenTextures(1, &postProcessingTexture);
@@ -417,6 +421,14 @@ int findClickedPlanet(GLFWwindow* window, const glm::mat4& view, const glm::mat4
     return closestPlanet;
 }
 
+void updateHoveredPlanet(GLFWwindow* window, const glm::mat4& view, const glm::mat4& projection) {
+    // Only update hover when not orbiting
+    if (orbitActive)
+        return;
+        
+    hoveredPlanetIndex = findClickedPlanet(window, view, projection, planets);
+}
+
 GLuint loadTexture(const std::string& path) {
     // Debug output
     std::cout << "Loading texture: " << path << std::endl;
@@ -573,6 +585,23 @@ void Planet::draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection,
     glBindVertexArray(0);
 }
 
+// And implement it
+void Planet::drawOutline(GLuint shaderProgram) {
+    // Bind VAO but override color/texture with solid white
+    glBindVertexArray(VAO);
+    
+    // Set outline color to white
+    glUniform3f(glGetUniformLocation(shaderProgram, "outlineColor"), 1.0f, 1.0f, 1.0f);
+    glUniform1i(glGetUniformLocation(shaderProgram, "isOutline"), 1); // Add this uniform to your shader
+    
+    // Draw the outline
+    glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
+    
+    // Reset outline flag
+    glUniform1i(glGetUniformLocation(shaderProgram, "isOutline"), 0);
+    
+    glBindVertexArray(0);
+}
 
 int main() {
     // Initialize GLFW
@@ -617,7 +646,8 @@ int main() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);     // Only render front-facing triangles
-    glFrontFace(GL_CCW);  
+    glFrontFace(GL_CCW);
+    glEnable(GL_STENCIL_TEST);  
 
     // Load shaders
     GLuint shaderProgram = createShaderProgram("vertex_shader.glsl", "fragment_shader.glsl");
@@ -684,7 +714,7 @@ int main() {
         // Replace the current orbit center calculation in your main loop
         // Get orbit center (sun or focused planet)
         glm::vec3 orbitCenter(0.0f);
-
+        
         // Update target position if following a planet
         if (followingPlanet && focusedPlanetIndex >= 0 && focusedPlanetIndex < planets.size()) {
             targetOrbitCenter = planets[focusedPlanetIndex]->position;
@@ -722,7 +752,7 @@ int main() {
 
         // PASS 1A: Draw skybox to its own framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, skyboxFBO);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
         // Draw skybox
         glDepthFunc(GL_LEQUAL);
@@ -769,11 +799,54 @@ int main() {
         float currentTime = glfwGetTime();
         glm::vec3 lightPos(0.0f, 0.0f, 0.0f); // Sun position at origin
 
+        // First, update which planet is hovered BEFORE any drawing
+        updateHoveredPlanet(window, view, projection);
+
+        // Reset stencil buffer
+        glStencilMask(0xFF);
+        glClear(GL_STENCIL_BUFFER_BIT);
+        
+        // Draw planets with stencil writing only for the hovered planet
         for (size_t i = 0; i < planets.size(); i++) {
             planets[i]->update(currentTime);
+            
+            // Special handling for hovered planet
+            if (i == hoveredPlanetIndex) {
+                glStencilFunc(GL_ALWAYS, 1, 0xFF);
+                glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+                glStencilMask(0xFF);
+            } else {
+                glStencilMask(0x00); // Don't write to stencil buffer
+            }
+            
             planets[i]->draw(shaderProgram, view, projection, 
-                        glm::vec3(camX, camY, camZ), // Camera position
-                        lightPos);                   // Light position
+                        glm::vec3(camX, camY, camZ), lightPos);
+        }
+
+        // Draw outline for hovered planet
+        if (hoveredPlanetIndex >= 0 && hoveredPlanetIndex < planets.size()) {
+            glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+            glStencilMask(0x00);
+            glDisable(GL_DEPTH_TEST);
+            
+            // Create a complete model matrix that matches the planet's current state
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, planets[hoveredPlanetIndex]->position);
+            model = glm::rotate(model, glm::radians(planets[hoveredPlanetIndex]->axialTilt), 
+                            glm::vec3(0.0f, 0.0f, 1.0f));
+            model = glm::rotate(model, static_cast<float>(glfwGetTime()) * planets[hoveredPlanetIndex]->rotationSpeed, 
+                            glm::vec3(0.0f, 1.0f, 0.0f));
+            model = glm::scale(model, glm::vec3(1.3f)); // Slightly larger scale for better visibility
+            
+            glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            
+            // Draw outline with the shader
+            planets[hoveredPlanetIndex]->drawOutline(shaderProgram);
+            
+            // Reset state
+            glStencilMask(0xFF);
+            glStencilFunc(GL_ALWAYS, 0, 0xFF);
+            glEnable(GL_DEPTH_TEST);
         }
 
         // SECOND PASS: Blur the bloom texture using ping-pong

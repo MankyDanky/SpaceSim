@@ -13,8 +13,21 @@ uniform vec3 lightColor;
 uniform float ambientStrength;
 uniform float emissionStrength;
 
+
+// Add these uniforms for outline rendering
+uniform bool isOutline = false;
+uniform vec3 outlineColor = vec3(1.0, 1.0, 1.0);
+
 void main()
 {
+    if (isOutline) {
+        // For outlines, just use a solid color with bloom
+        FragColor = vec4(outlineColor, 1.0);
+        BloomColor = vec4(0.0,0.0,0.0, 1.0);
+        return;
+    }
+
+    // Regular rendering below (unchanged)
     // ambient
     vec3 ambient = ambientStrength * lightColor;
 
