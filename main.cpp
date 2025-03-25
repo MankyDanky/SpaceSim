@@ -825,18 +825,36 @@ int main() {
 
         // Draw outline for hovered planet
         if (hoveredPlanetIndex >= 0 && hoveredPlanetIndex < planets.size()) {
+            // Calculate distance from camera to planet
+            glm::vec3 planetPos = planets[hoveredPlanetIndex]->position;
+            glm::vec3 cameraPos = glm::vec3(camX, camY, camZ);
+            float distance = glm::length(cameraPos - planetPos);
+
+            // Get the current planet's radius
+            float planetRadius = planets[hoveredPlanetIndex]->radius;
+
+            // Calculate a constant thickness in world units (adjust 0.05f to your preference)
+            float outlineThickness = 0.05f;
+                        
+            // Adjust thickness based on distance to maintain constant pixel width
+            outlineThickness *= (distance * 0.1f);
+
+            // Calculate scale factor that creates a constant-width outline
+            // 1.0 + (constant thickness / planet radius)
+            float outlineScale = 1.0f + (outlineThickness / planetRadius);
+            
             glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
             glStencilMask(0x00);
             glDisable(GL_DEPTH_TEST);
             
-            // Create a complete model matrix that matches the planet's current state
+            // Create model matrix with distance-based scale
             glm::mat4 model = glm::mat4(1.0f);
             model = glm::translate(model, planets[hoveredPlanetIndex]->position);
             model = glm::rotate(model, glm::radians(planets[hoveredPlanetIndex]->axialTilt), 
                             glm::vec3(0.0f, 0.0f, 1.0f));
             model = glm::rotate(model, static_cast<float>(glfwGetTime()) * planets[hoveredPlanetIndex]->rotationSpeed, 
                             glm::vec3(0.0f, 1.0f, 0.0f));
-            model = glm::scale(model, glm::vec3(1.3f)); // Slightly larger scale for better visibility
+            model = glm::scale(model, glm::vec3(outlineScale)); // Dynamic scale based on distance
             
             glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
             
