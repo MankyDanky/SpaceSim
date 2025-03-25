@@ -823,47 +823,44 @@ int main() {
                         glm::vec3(camX, camY, camZ), lightPos);
         }
 
-        // Draw outline for hovered planet
+        // In your hover rendering code:
         if (hoveredPlanetIndex >= 0 && hoveredPlanetIndex < planets.size()) {
-            // Calculate distance from camera to planet
+            // Get planet info
             glm::vec3 planetPos = planets[hoveredPlanetIndex]->position;
-            glm::vec3 cameraPos = glm::vec3(camX, camY, camZ);
-            float distance = glm::length(cameraPos - planetPos);
-
-            // Get the current planet's radius
             float planetRadius = planets[hoveredPlanetIndex]->radius;
-
-            // Calculate a constant thickness in world units (adjust 0.05f to your preference)
-            float outlineThickness = 0.05f;
-                        
-            // Adjust thickness based on distance to maintain constant pixel width
-            outlineThickness *= (distance * 0.1f);
-
-            // Calculate scale factor that creates a constant-width outline
-            // 1.0 + (constant thickness / planet radius)
-            float outlineScale = 1.0f + (outlineThickness / planetRadius);
             
-            glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
-            glStencilMask(0x00);
+            // Enable blending
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            
+            // Disable depth testing to make outline visible through planet
             glDisable(GL_DEPTH_TEST);
             
-            // Create model matrix with distance-based scale
+            // Draw outline with ring effect
             glm::mat4 model = glm::mat4(1.0f);
-            model = glm::translate(model, planets[hoveredPlanetIndex]->position);
+            model = glm::translate(model, planetPos);
             model = glm::rotate(model, glm::radians(planets[hoveredPlanetIndex]->axialTilt), 
                             glm::vec3(0.0f, 0.0f, 1.0f));
             model = glm::rotate(model, static_cast<float>(glfwGetTime()) * planets[hoveredPlanetIndex]->rotationSpeed, 
                             glm::vec3(0.0f, 1.0f, 0.0f));
-            model = glm::scale(model, glm::vec3(outlineScale)); // Dynamic scale based on distance
             
+            // Scale slightly larger than planet
+            float outlineScale = 1.3f;
+            model = glm::scale(model, glm::vec3(outlineScale));
             glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
             
-            // Draw outline with the shader
+            // Set ring parameters - adjust these values to control the ring appearance
+            glUniform1i(glGetUniformLocation(shaderProgram, "isOutline"), 1);
+            glUniform3f(glGetUniformLocation(shaderProgram, "outlineColor"), 1.0f, 1.0f, 1.0f);
+            glUniform1f(glGetUniformLocation(shaderProgram, "outlineAlpha"), 1.0f);
+            glUniform1f(glGetUniformLocation(shaderProgram, "innerRadius"), 0.3f); // Controls gap size
+            glUniform1f(glGetUniformLocation(shaderProgram, "outerRadius"), 0.0f); // Edge of sphere
+            
+            // Draw outline
             planets[hoveredPlanetIndex]->drawOutline(shaderProgram);
             
             // Reset state
-            glStencilMask(0xFF);
-            glStencilFunc(GL_ALWAYS, 0, 0xFF);
+            glUniform1i(glGetUniformLocation(shaderProgram, "isOutline"), 0);
             glEnable(GL_DEPTH_TEST);
         }
 
@@ -1010,27 +1007,20 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
     
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
-            // If right control or command is held, select planet instead of orbiting
-            if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || 
-                glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || 
-                glfwGetKey(window, GLFW_KEY_LEFT_SUPER) == GLFW_PRESS) {
-                int clickedPlanet = findClickedPlanet(window, currentView, currentProjection, planets);
-                if (clickedPlanet >= 0) {
-                    focusedPlanetIndex = clickedPlanet;
-                    followingPlanet = true;
-                    targetOrbitCenter = planets[clickedPlanet]->position; // Set target, not immediate
-                    inTransition = true;
-                    std::cout << "Now focusing on planet " << clickedPlanet << std::endl;
-                } else {
-                    std::cout << "No target found" << std::endl;
-                }
-                return;
+            // Check if we're hovering over a planet
+            if (hoveredPlanetIndex >= 0) {
+                // Focus on the hovered planet
+                focusedPlanetIndex = hoveredPlanetIndex;
+                followingPlanet = true;
+                targetOrbitCenter = planets[hoveredPlanetIndex]->position;
+                inTransition = true;
+                std::cout << "Now focusing on planet " << hoveredPlanetIndex << std::endl;
+            } else {
+                // Not hovering over a planet, enable orbit mode
+                orbitActive = true;
+                firstMouse = true;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
             }
-            
-            // Normal orbit behavior
-            orbitActive = true;
-            firstMouse = true;
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         } else if (action == GLFW_RELEASE) {
             orbitActive = false;
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);

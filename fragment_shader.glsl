@@ -13,17 +13,33 @@ uniform vec3 lightColor;
 uniform float ambientStrength;
 uniform float emissionStrength;
 
-
 // Add these uniforms for outline rendering
 uniform bool isOutline = false;
 uniform vec3 outlineColor = vec3(1.0, 1.0, 1.0);
+uniform float outlineAlpha = 1.0;
+uniform float innerRadius = 0.95; // Controls inner boundary of the outline ring
+uniform float outerRadius = 1.0;  // Controls outer boundary of the outline ring
 
 void main()
 {
     if (isOutline) {
-        // For outlines, just use a solid color with bloom
-        FragColor = vec4(outlineColor, 1.0);
-        BloomColor = vec4(0.0,0.0,0.0, 1.0);
+        // Calculate distance from fragment to center in view space
+        vec3 viewNormal = normalize(Normal);
+        
+        // For a sphere, the normal is equivalent to position in object space
+        // Use this to calculate where we are on the sphere surface
+        float ndotv = abs(dot(viewNormal, normalize(viewPos - FragPos)));
+        
+        // Discard fragments that aren't within our ring boundaries
+        // This creates a ring effect at the edges of the sphere
+        if (ndotv > innerRadius) {
+            // Inside the gap - make transparent
+            discard;
+        }
+        
+        // For the remaining fragments, render the outline
+        FragColor = vec4(outlineColor, outlineAlpha);
+        BloomColor = vec4(0, 0, 0, outlineAlpha);
         return;
     }
 
