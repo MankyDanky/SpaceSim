@@ -13,33 +13,53 @@ uniform vec3 lightColor;
 uniform float ambientStrength;
 uniform float emissionStrength;
 
-// Add these uniforms for outline rendering
+// Outline uniforms
 uniform bool isOutline = false;
 uniform vec3 outlineColor = vec3(1.0, 1.0, 1.0);
 uniform float outlineAlpha = 1.0;
-uniform float innerRadius = 0.95; // Controls inner boundary of the outline ring
-uniform float outerRadius = 1.0;  // Controls outer boundary of the outline ring
+uniform float innerRadius = 0.95;
+uniform float outerRadius = 1.0;
 
 void main()
 {
     if (isOutline) {
         // Calculate distance from fragment to center in view space
         vec3 viewNormal = normalize(Normal);
-        
-        // For a sphere, the normal is equivalent to position in object space
-        // Use this to calculate where we are on the sphere surface
         float ndotv = abs(dot(viewNormal, normalize(viewPos - FragPos)));
         
-        // Discard fragments that aren't within our ring boundaries
-        // This creates a ring effect at the edges of the sphere
+        // First discard fragments inside the gap (same as before)
         if (ndotv > innerRadius) {
-            // Inside the gap - make transparent
             discard;
+        }
+        
+        // Now calculate angle around the planet for the compass effect
+        // Project normal onto screen-facing plane
+        vec3 viewDir = normalize(viewPos - FragPos);
+        vec3 rightDir = normalize(cross(vec3(0.0, 1.0, 0.0), viewDir));
+        vec3 upDir = normalize(cross(viewDir, rightDir));
+        
+        // Calculate 2D position on unit circle of sphere
+        float x = dot(Normal, rightDir);
+        float y = dot(Normal, upDir);
+        
+        // Calculate angle in radians and convert to degrees
+        float angle = degrees(atan(y, x));
+        if (angle < 0.0) angle += 360.0; // Convert to 0-360 range
+        
+        // Get modulo 90 to repeat every quadrant
+        float quadrantAngle = mod(angle, 90.0);
+        
+        // Width of cardinal direction segments (adjust as needed)
+        float cardinalWidth = 30.0; // Width in degrees
+        
+        // Discard diagonal segments
+        if (quadrantAngle > cardinalWidth && quadrantAngle < (90.0 - cardinalWidth)) {
+            discard; // This creates gaps at the diagonals
         }
         
         // For the remaining fragments, render the outline
         FragColor = vec4(outlineColor, outlineAlpha);
-        BloomColor = vec4(0, 0, 0, outlineAlpha);
+        BloomColor = vec4(0.0, 0.0, 0.0, 1.0); // Set to black (no bloom)
         return;
     }
 
