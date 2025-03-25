@@ -20,6 +20,12 @@ bool followingPlanet = false;
 glm::mat4 currentView;
 glm::mat4 currentProjection;
 
+// Add these to your global variables
+glm::vec3 currentOrbitCenter(0.0f);  // Current camera target position
+glm::vec3 targetOrbitCenter(0.0f);   // Target position we're moving towards
+float transitionSpeed = 4.0f;        // Speed of camera transition (adjust as needed)
+bool inTransition = false;           // Whether we're currently in transition
+
 // Forward declaration for the Planet class
 class Planet {
     public:
@@ -350,65 +356,65 @@ void createSphere(float radius, int sectorCount, int stackCount, std::vector<flo
 bool ray_sphere_intersection(const glm::vec3& rayOrigin, const glm::vec3& rayDir, 
     const glm::vec3& sphereCenter, float sphereRadius,
     float& t) {
-glm::vec3 oc = rayOrigin - sphereCenter;
-float a = glm::dot(rayDir, rayDir);
-float b = 2.0f * glm::dot(oc, rayDir);
-float c = glm::dot(oc, oc) - sphereRadius * sphereRadius;
-float discriminant = b*b - 4*a*c;
+    glm::vec3 oc = rayOrigin - sphereCenter;
+    float a = glm::dot(rayDir, rayDir);
+    float b = 2.0f * glm::dot(oc, rayDir);
+    float c = glm::dot(oc, oc) - sphereRadius * sphereRadius;
+    float discriminant = b*b - 4*a*c;
 
-if (discriminant < 0) {
-return false;
-} else {
-t = (-b - sqrt(discriminant)) / (2.0f * a);
-return t > 0;
-}
+    if (discriminant < 0) {
+        return false;
+    } else {
+        t = (-b - sqrt(discriminant)) / (2.0f * a);
+        return t > 0;
+    }
 }
 
 // Function to find which planet was clicked
 int findClickedPlanet(GLFWwindow* window, const glm::mat4& view, const glm::mat4& projection,
-const std::vector<Planet*>& planets) {
-// Get mouse position
-double mouseX, mouseY;
-glfwGetCursorPos(window, &mouseX, &mouseY);
+    const std::vector<Planet*>& planets) {
+    // Get mouse position
+    double mouseX, mouseY;
+    glfwGetCursorPos(window, &mouseX, &mouseY);
 
-// Convert screen coordinates to normalized device coordinates
-int windowWidth, windowHeight;
-glfwGetWindowSize(window, &windowWidth, &windowHeight);
-float x = (2.0f * mouseX) / windowWidth - 1.0f;
-float y = 1.0f - (2.0f * mouseY) / windowHeight;
+    // Convert screen coordinates to normalized device coordinates
+    int windowWidth, windowHeight;
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+    float x = (2.0f * mouseX) / windowWidth - 1.0f;
+    float y = 1.0f - (2.0f * mouseY) / windowHeight;
 
-// Create ray in NDC space
-glm::vec4 rayStart = glm::vec4(x, y, -1.0f, 1.0f);
-glm::vec4 rayEnd = glm::vec4(x, y, 0.0f, 1.0f);
+    // Create ray in NDC space
+    glm::vec4 rayStart = glm::vec4(x, y, -1.0f, 1.0f);
+    glm::vec4 rayEnd = glm::vec4(x, y, 0.0f, 1.0f);
 
-// Convert to world space
-glm::mat4 inverseViewProj = glm::inverse(projection * view);
-glm::vec4 worldRayStart = inverseViewProj * rayStart;
-worldRayStart /= worldRayStart.w;
-glm::vec4 worldRayEnd = inverseViewProj * rayEnd;
-worldRayEnd /= worldRayEnd.w;
+    // Convert to world space
+    glm::mat4 inverseViewProj = glm::inverse(projection * view);
+    glm::vec4 worldRayStart = inverseViewProj * rayStart;
+    worldRayStart /= worldRayStart.w;
+    glm::vec4 worldRayEnd = inverseViewProj * rayEnd;
+    worldRayEnd /= worldRayEnd.w;
 
-// Calculate ray direction
-glm::vec3 rayOrigin = glm::vec3(worldRayStart);
-glm::vec3 rayDir = glm::normalize(glm::vec3(worldRayEnd - worldRayStart));
+    // Calculate ray direction
+    glm::vec3 rayOrigin = glm::vec3(worldRayStart);
+    glm::vec3 rayDir = glm::normalize(glm::vec3(worldRayEnd - worldRayStart));
 
-// Check intersection with each planet
-int closestPlanet = -1;
-float closestT = FLT_MAX;
+    // Check intersection with each planet
+    int closestPlanet = -1;
+    float closestT = FLT_MAX;
 
-for (int i = 0; i < planets.size(); i++) {
-float t;
-if (ray_sphere_intersection(rayOrigin, rayDir, 
-           planets[i]->position, 
-           planets[i]->radius, t)) {
-if (t < closestT) {
-closestT = t;
-closestPlanet = i;
-}
-}
-}
+    for (int i = 0; i < planets.size(); i++) {
+        float t;
+        if (ray_sphere_intersection(rayOrigin, rayDir, 
+            planets[i]->position, 
+            planets[i]->radius, t)) {
+            if (t < closestT) {
+                closestT = t;
+                closestPlanet = i;
+            }
+        }
+    }
 
-return closestPlanet;
+    return closestPlanet;
 }
 
 GLuint loadTexture(const std::string& path) {
@@ -675,10 +681,27 @@ int main() {
         glm::mat4 model = glm::mat4(1.0f);
         // Calculate camera position using spherical coordinates
         // Get orbit center (sun or focused planet)
+        // Replace the current orbit center calculation in your main loop
+        // Get orbit center (sun or focused planet)
         glm::vec3 orbitCenter(0.0f);
+
+        // Update target position if following a planet
         if (followingPlanet && focusedPlanetIndex >= 0 && focusedPlanetIndex < planets.size()) {
-            orbitCenter = planets[focusedPlanetIndex]->position;
+            targetOrbitCenter = planets[focusedPlanetIndex]->position;
         }
+
+        // Smooth interpolation between current and target positions
+        if (glm::distance(currentOrbitCenter, targetOrbitCenter) > 0.01f) {
+            // Non-linear easing function (exponential approach)
+            float t = 1.0f - exp(-transitionSpeed * deltaTime);
+            currentOrbitCenter = currentOrbitCenter + t * (targetOrbitCenter - currentOrbitCenter);
+            inTransition = true;
+        } else {
+            inTransition = false;
+        }
+
+        // Use the smoothed position for camera calculations
+        orbitCenter = currentOrbitCenter;
 
         // Calculate camera position using spherical coordinates around the orbit center
         float camX = orbitCenter.x + sin(glm::radians(yaw)) * cos(glm::radians(pitch)) * cameraDistance;
@@ -904,6 +927,8 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 if (clickedPlanet >= 0) {
                     focusedPlanetIndex = clickedPlanet;
                     followingPlanet = true;
+                    targetOrbitCenter = planets[clickedPlanet]->position; // Set target, not immediate
+                    inTransition = true;
                     std::cout << "Now focusing on planet " << clickedPlanet << std::endl;
                 } else {
                     std::cout << "No target found" << std::endl;
@@ -925,6 +950,8 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
     if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
         focusedPlanetIndex = -1;
         followingPlanet = false;
+        targetOrbitCenter = glm::vec3(0.0f); // Set target to sun
+        inTransition = true;
         std::cout << "Now focusing on sun" << std::endl;
     }
 }
