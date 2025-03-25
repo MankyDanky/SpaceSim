@@ -30,6 +30,24 @@ glm::vec3 targetOrbitCenter(0.0f);   // Target position we're moving towards
 float transitionSpeed = 4.0f;        // Speed of camera transition (adjust as needed)
 bool inTransition = false;           // Whether we're currently in transition
 
+// 2. Create a helper function to get planet names
+std::string getPlanetName(int index) {
+    if (index == -1) return "Sun";
+    
+    switch(index) {
+        case 0: return "Sun";
+        case 1: return "Mercury";
+        case 2: return "Venus";
+        case 3: return "Earth";
+        case 4: return "Mars";
+        case 5: return "Jupiter";
+        case 6: return "Saturn";
+        case 7: return "Uranus";
+        case 8: return "Neptune";
+        default: return "Unknown";
+    }
+}
+
 // Forward declaration for the Planet class
 class Planet {
     public:
@@ -645,6 +663,23 @@ int main() {
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetMouseButtonCallback(window, mouse_button_callback);
 
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 330");
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Load a custom font
+    ImFont* customFont = io.Fonts->AddFontFromFileTTF("Orbitron-VariableFont_wght.ttf", 32.0f);
+    if (!customFont) {
+        std::cout << "Failed to load custom font!" << std::endl;
+        // Fall back to default font
+        customFont = io.Fonts->AddFontDefault();
+    }
+    // Build font atlas
+    ImGui_ImplOpenGL3_CreateFontsTexture();
+
     // Enable depth test
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -909,13 +944,49 @@ int main() {
 
         // Render final composite quad
         renderQuad();
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        float windowWidth = 200.0f; // Fixed window width
+        ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.25f - windowWidth*0.5f, 10.0f));
+        ImGui::SetNextWindowSize(ImVec2(windowWidth, 0)); // Auto-height
+        ImGui::SetNextWindowBgAlpha(0.3f);
 
+        ImGui::Begin("Planet Info", nullptr, 
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
 
+        // Begin using custom font
+        ImGui::PushFont(customFont);
+
+        // Get the text content
+        std::string planetText = getPlanetName(focusedPlanetIndex);
+
+        // Calculate text size
+        ImVec2 textSize = ImGui::CalcTextSize(planetText.c_str());
+
+        // Calculate position to center text in window
+        float textPosX = (windowWidth - textSize.x) * 0.5f;
+
+        // Add spacing on the left to center the text
+        ImGui::SetCursorPosX(textPosX);
+
+        // Draw the text
+        ImGui::Text("%s", planetText.c_str());
+
+        // Return to default font
+        ImGui::PopFont();
+
+        ImGui::End();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         // Swap buffers
         glfwSwapBuffers(window);
         
         // Poll for and process events
         glfwPollEvents();
+
     }
 
     // Clean up and exit
@@ -932,6 +1003,11 @@ int main() {
     planets.clear();
     glfwDestroyWindow(window);
     glfwTerminate();
+
+    // 5. Add shutdown code before program termination
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
     return 0;
 }
 
