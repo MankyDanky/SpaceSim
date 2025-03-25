@@ -952,6 +952,9 @@ int main() {
         ImGui::SetNextWindowSize(ImVec2(windowWidth, 0)); // Auto-height
         ImGui::SetNextWindowBgAlpha(0.3f);
 
+        ImGuiStyle& style = ImGui::GetStyle();
+        float oldRounding = style.WindowRounding;
+        style.WindowRounding = 5.0f;
         ImGui::Begin("Planet Info", nullptr, 
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
@@ -978,7 +981,8 @@ int main() {
         ImGui::PopFont();
 
         ImGui::End();
-
+        
+        style.WindowRounding = oldRounding;
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         // Swap buffers
