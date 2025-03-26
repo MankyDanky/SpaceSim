@@ -24,6 +24,11 @@ bool followingPlanet = false;
 glm::mat4 currentView;
 glm::mat4 currentProjection;
 
+// Simulation speed control
+float timeScale = 1.0f;      // 1.0 = normal speed, 2.0 = double speed, 0.0 = paused
+bool isPaused = false;  
+GLuint pauseTexture, playTexture, forwardTexture;
+
 // Add these to your global variables
 glm::vec3 currentOrbitCenter(0.0f);  // Current camera target position
 glm::vec3 targetOrbitCenter(0.0f);   // Target position we're moving towards
@@ -717,6 +722,9 @@ int main() {
     GLuint saturnTexture = loadTexture("saturn.jpg");
     GLuint uranusTexture = loadTexture("uranus.jpg");
     GLuint neptuneTexture = loadTexture("neptune.jpg");
+    pauseTexture = loadTexture("pause-solid.png");
+    playTexture = loadTexture("play-solid.png");
+    forwardTexture = loadTexture("forward-solid.png");
 
     // Create planets
     planets.push_back(new Planet(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.5f, sunTexture));
@@ -846,8 +854,10 @@ int main() {
         
         // Draw planets with stencil writing only for the hovered planet
         for (size_t i = 0; i < planets.size(); i++) {
-            planets[i]->update(currentTime);
-            
+            if (!isPaused) {
+                float scaledTime = currentTime * timeScale;
+                planets[i]->update(scaledTime);
+            }
             // Special handling for hovered planet
             if (i == hoveredPlanetIndex) {
                 glStencilFunc(GL_ALWAYS, 1, 0xFF);
@@ -948,7 +958,7 @@ int main() {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         float windowWidth = 200.0f; // Fixed window width
-        ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.25f - windowWidth*0.5f, 10.0f));
+        ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.25f - windowWidth*0.5f, 15.0f));
         ImGui::SetNextWindowSize(ImVec2(windowWidth, 0)); // Auto-height
         ImGui::SetNextWindowBgAlpha(0.3f);
 
@@ -981,7 +991,95 @@ int main() {
         ImGui::PopFont();
 
         ImGui::End();
-        
+            
+        // Remove the current speed controls window code and replace with this:
+
+        // 1. Play/Pause Button Window
+        float buttonSize = 40.0f;  // Button size
+        float windowPadding = 10.0f;  // Padding around button
+        float windowSpacing = 3.0f;  // Space between windows
+
+        float imageSize = 25.0f;
+        int framePadding = 10;
+
+        // 1. Play/Pause Button Window - keep window completely transparent
+        ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.5 - buttonSize - windowPadding*2 - windowSpacing - buttonSize - windowPadding*2 - 10, 5.0f));
+        ImGui::SetNextWindowSize(ImVec2(buttonSize + windowPadding*2, buttonSize + windowPadding*2));
+        ImGui::SetNextWindowBgAlpha(0.0f); // Keep window transparent
+
+        // Remove window styling but keep variables for button
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f); 
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(windowPadding, windowPadding));
+
+        // Apply styling to the buttons - add border
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f); // Round button corners
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f); // Add border to button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.3f)); // Semi-transparent background
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.4f)); // Slightly lighter on hover
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.5f)); // Even lighter when clicked
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.3f)); // White border
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(framePadding, framePadding));
+
+        ImGui::Begin("Play/Pause", nullptr, 
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
+            ImGuiWindowFlags_NoBackground);
+
+       // For Play/Pause button:
+        if (ImGui::ImageButton(isPaused ? "PlayButton" : "PauseButton", 
+            (ImTextureID)(uintptr_t)(isPaused ? playTexture : pauseTexture), 
+            ImVec2(imageSize, imageSize),
+            ImVec2(0, 0), ImVec2(1, 1),
+            ImVec4(0,0,0,0))) {  // Use integer padding value
+            isPaused = !isPaused;
+            timeScale = isPaused ? 0.0f : (timeScale >= 2.0f ? 2.0f : 1.0f);
+        }
+
+
+        ImGui::End();
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar(5); 
+
+        // 2. Speed Control Button Window - similar changes
+        ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.5 - buttonSize - windowPadding*2 - 10, 5.0f));
+        ImGui::SetNextWindowSize(ImVec2(buttonSize + windowPadding*2, buttonSize + windowPadding*2));
+        ImGui::SetNextWindowBgAlpha(0.0f); // Make window fully transparent
+
+        // Remove window styling but keep variables for button
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(windowPadding, windowPadding));
+
+        // Apply styling to the buttons instead
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f); // Round button corners
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f); // Add border to button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.3f)); // Semi-transparent background
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.4f)); // Slightly lighter on hover
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.5f)); // Even lighter when clicked
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.3f)); // White border
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(framePadding, framePadding));
+
+        ImGui::Begin("Speed Control", nullptr, 
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
+            ImGuiWindowFlags_NoBackground); // Add NoBackground flag
+
+        bool isDoubleSpeed = (timeScale >= 2.0f);
+        // 4. Update Speed button similarly
+        if (ImGui::ImageButton("SpeedButton", 
+            (ImTextureID)(uintptr_t)forwardTexture,
+            ImVec2(imageSize, imageSize),  // Use smaller image size 
+            ImVec2(0,0), ImVec2(1,1),
+            ImVec4(0,0,0,0))) {  // Add padding
+            isDoubleSpeed = !isDoubleSpeed;
+            if (!isPaused) {
+                timeScale = isDoubleSpeed ? 2.0f : 1.0f;
+            }
+        }
+
+        ImGui::End();
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar(5);
+
         style.WindowRounding = oldRounding;
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
