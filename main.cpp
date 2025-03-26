@@ -62,6 +62,7 @@ class Planet {
         float radius;
         float orbitRadius;
         float rotationSpeed;
+        float rotation;
         float orbitalSpeed;
         float axialTilt;
         float emissionStrength;
@@ -518,7 +519,8 @@ Planet::Planet(float radius, float orbitRadius, float rotationSpeed, float orbit
     : radius(radius), orbitRadius(orbitRadius), rotationSpeed(rotationSpeed),
         orbitalSpeed(orbitalSpeed), axialTilt(axialTilt), emissionStrength(emissionStrength),
         position(glm::vec3(orbitRadius, 0.0f, 0.0f)), texture(texture) {
-    
+        
+    rotation = 0.0f;
     // Create sphere geometry
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
@@ -567,6 +569,7 @@ void Planet::update(float currentTime) {
     float angle = currentTime * orbitalSpeed;
     position.x = cosf(angle) * orbitRadius;
     position.z = sinf(angle) * orbitRadius;
+    rotation = currentTime * rotationSpeed;
 }
 
 // Draw planet
@@ -589,7 +592,6 @@ void Planet::draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection,
     model = glm::rotate(model, glm::radians(axialTilt), glm::vec3(1.0f, 0.0f, 0.0f));
     
     // Apply self-rotation
-    float rotation = glfwGetTime() * rotationSpeed;
     model = glm::rotate(model, rotation, glm::vec3(0.0f, 0.0f, 1.0f));
     
     // Set uniforms
@@ -645,7 +647,7 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     // Create a GLFW window
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Sun Simulation", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(800, 600, "Space Simulation", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -1052,12 +1054,13 @@ int main() {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(windowPadding, windowPadding));
 
-        // Apply styling to the buttons instead
+        // Apply styling to the buttons
+        bool isDoubleSpeed = (timeScale >= 2.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f); // Round button corners
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f); // Add border to button
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.3f)); // Semi-transparent background
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.4f)); // Slightly lighter on hover
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.5f)); // Even lighter when clicked
+        ImGui::PushStyleColor(ImGuiCol_Button, (isDoubleSpeed? ImVec4(0.256f, 0.53f, 0.96f, 0.5f) : ImVec4(0.0f, 0.0f, 0.0f, 0.3f))); // Semi-transparent backgroun 0.256f, 0.53f, 0.96f       
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (isDoubleSpeed? ImVec4(0.356f, 0.63f, 0.96f, 0.6f) : ImVec4(0.1f, 0.1f, 0.1f, 0.4f))); // Slightly lighter on hover
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, (isDoubleSpeed? ImVec4(0.37f, 0.65f, 0.96f, 0.6f) : ImVec4(0.2f, 0.2f, 0.2f, 0.5f))); // Even lighter when clicked
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.3f)); // White border
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(framePadding, framePadding));
 
@@ -1066,7 +1069,6 @@ int main() {
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
             ImGuiWindowFlags_NoBackground); // Add NoBackground flag
 
-        bool isDoubleSpeed = (timeScale >= 2.0f);
         // 4. Update Speed button similarly
         if (ImGui::ImageButton("SpeedButton", 
             (ImTextureID)(uintptr_t)forwardTexture,
