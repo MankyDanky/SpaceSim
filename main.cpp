@@ -581,13 +581,16 @@ void Planet::draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection,
     // Create model matrix
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::translate(model, position);
-    
+   
+    // First rotate to align rotation axis properly (90 degrees around X-axis)
+    model = glm::rotate(model, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+
     // Apply axial tilt
-    model = glm::rotate(model, glm::radians(axialTilt), glm::vec3(0.0f, 0.0f, 1.0f));
+    model = glm::rotate(model, glm::radians(axialTilt), glm::vec3(1.0f, 0.0f, 0.0f));
     
     // Apply self-rotation
     float rotation = glfwGetTime() * rotationSpeed;
-    model = glm::rotate(model, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+    model = glm::rotate(model, rotation, glm::vec3(0.0f, 0.0f, 1.0f));
     
     // Set uniforms
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
@@ -996,14 +999,14 @@ int main() {
 
         // 1. Play/Pause Button Window
         float buttonSize = 40.0f;  // Button size
-        float windowPadding = 10.0f;  // Padding around button
-        float windowSpacing = 3.0f;  // Space between windows
+        float windowPadding = 15.0f;  // Padding around button
+        float windowSpacing = 0.0f;  // Space between windows
 
-        float imageSize = 25.0f;
-        int framePadding = 10;
+        float imageSize = 15.0f;
+        int framePadding = 15;
 
         // 1. Play/Pause Button Window - keep window completely transparent
-        ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.5 - buttonSize - windowPadding*2 - windowSpacing - buttonSize - windowPadding*2 - 10, 5.0f));
+        ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.5 - buttonSize - windowPadding*2 - windowSpacing - buttonSize - windowPadding*2 - 10, 0));
         ImGui::SetNextWindowSize(ImVec2(buttonSize + windowPadding*2, buttonSize + windowPadding*2));
         ImGui::SetNextWindowBgAlpha(0.0f); // Keep window transparent
 
@@ -1041,7 +1044,7 @@ int main() {
         ImGui::PopStyleVar(5); 
 
         // 2. Speed Control Button Window - similar changes
-        ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.5 - buttonSize - windowPadding*2 - 10, 5.0f));
+        ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.5 - buttonSize - windowPadding*2 - 10, 0.0f));
         ImGui::SetNextWindowSize(ImVec2(buttonSize + windowPadding*2, buttonSize + windowPadding*2));
         ImGui::SetNextWindowBgAlpha(0.0f); // Make window fully transparent
 
@@ -1179,6 +1182,10 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
 
 // Update your mouse_button_callback
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse) {
+        return;
+    }
     static glm::mat4 lastView;
     static glm::mat4 lastProjection;
     
