@@ -25,6 +25,7 @@ glm::mat4 currentView;
 glm::mat4 currentProjection;
 
 // Simulation speed control
+float simulationTime = 0.0f;
 float timeScale = 1.0f;      // 1.0 = normal speed, 2.0 = double speed, 0.0 = paused
 bool isPaused = false;  
 GLuint pauseTexture, playTexture, forwardTexture;
@@ -847,7 +848,9 @@ int main() {
         glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
 
         // Update and draw all planets
-        float currentTime = glfwGetTime();
+        if (!isPaused) {
+            simulationTime += deltaTime * timeScale;
+        }
         glm::vec3 lightPos(0.0f, 0.0f, 0.0f); // Sun position at origin
 
         // First, update which planet is hovered BEFORE any drawing
@@ -860,8 +863,7 @@ int main() {
         // Draw planets with stencil writing only for the hovered planet
         for (size_t i = 0; i < planets.size(); i++) {
             if (!isPaused) {
-                float scaledTime = currentTime * timeScale;
-                planets[i]->update(scaledTime);
+                planets[i]->update(simulationTime);
             }
             // Special handling for hovered planet
             if (i == hoveredPlanetIndex) {
