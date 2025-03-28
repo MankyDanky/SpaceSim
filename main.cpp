@@ -69,10 +69,20 @@ class Planet {
         float emissionStrength;
         glm::vec3 position;
         unsigned int indexCount;
-        
-        // Constructor
-        Planet(float radius, float orbitRadius, float rotationSpeed, float orbitalSpeed, 
-               float axialTilt, float emissionStrength, GLuint texture);
+       
+        // Add these new ring-related variables
+        bool hasRings;
+        GLuint ringVAO, ringVBO, ringEBO;
+        GLuint ringTexture;
+        float ringInnerRadius;
+        float ringOuterRadius;
+        unsigned int ringIndexCount;
+
+         // Constructor
+         Planet(float radius, float orbitRadius, float rotationSpeed, float orbitalSpeed, 
+            float axialTilt, float emissionStrength, GLuint texture,
+            bool hasRings = false, float ringInnerRadius = 0.0f, 
+            float ringOuterRadius = 0.0f, GLuint ringTexture = 0);
         
         // Destructor
         ~Planet();
@@ -384,6 +394,63 @@ void createSphere(float radius, int sectorCount, int stackCount, std::vector<flo
     }
 }
 
+void createRing(float innerRadius, float outerRadius, int segments, 
+    std::vector<float>& vertices, std::vector<unsigned int>& indices) {
+    vertices.clear();
+    indices.clear();
+
+    float x, y, z;
+    float s, t;
+    float segmentStep = 2.0f * M_PI / segments;
+
+    // Generate vertices
+    for (int i = 0; i <= segments; i++) {
+        float angle = i * segmentStep;
+        float cosA = cos(angle);
+        float sinA = sin(angle);
+
+        // Inner vertex
+        x = innerRadius * cosA;
+        z = innerRadius * sinA;
+        y = 0.0f; // Flat ring
+
+        // Position
+        vertices.push_back(x);
+        vertices.push_back(y);
+        vertices.push_back(z);
+
+        // Normal (pointing up for lighting)
+        vertices.push_back(0.0f);
+        vertices.push_back(1.0f);
+        vertices.push_back(0.0f);
+
+        // Texcoord (radial mapping)
+        vertices.push_back(0.07f); // Inner edge
+        vertices.push_back(static_cast<float>(i) / segments);
+
+        // Outer vertex
+        x = outerRadius * cosA;
+        z = outerRadius * sinA;
+        y = 0.0f;
+
+        vertices.push_back(x);
+        vertices.push_back(y);
+        vertices.push_back(z);
+
+        vertices.push_back(0.0f);
+        vertices.push_back(1.0f);
+        vertices.push_back(0.0f);
+
+        vertices.push_back(1.0f); // Outer edge
+        vertices.push_back(static_cast<float>(i) / segments);
+    }
+
+    // Generate indices for triangle strip
+    for (int i = 0; i < segments * 2 + 2; i++) {
+        indices.push_back(i);
+    }
+}
+
 // Add this function after createSphere
 bool ray_sphere_intersection(const glm::vec3& rayOrigin, const glm::vec3& rayDir, 
     const glm::vec3& sphereCenter, float sphereRadius,
@@ -516,10 +583,13 @@ GLuint loadTexture(const std::string& path) {
         
 // Constructor
 Planet::Planet(float radius, float orbitRadius, float rotationSpeed, float orbitalSpeed, 
-        float axialTilt, float emissionStrength, GLuint texture) 
+    float axialTilt, float emissionStrength, GLuint texture,
+    bool hasRings, float ringInnerRadius, float ringOuterRadius, GLuint ringTexture)
     : radius(radius), orbitRadius(orbitRadius), rotationSpeed(rotationSpeed),
-        orbitalSpeed(orbitalSpeed), axialTilt(axialTilt), emissionStrength(emissionStrength),
-        position(glm::vec3(orbitRadius, 0.0f, 0.0f)), texture(texture) {
+    orbitalSpeed(orbitalSpeed), axialTilt(axialTilt), emissionStrength(emissionStrength),
+    position(glm::vec3(orbitRadius, 0.0f, 0.0f)), texture(texture),
+    hasRings(hasRings), ringInnerRadius(ringInnerRadius), ringOuterRadius(ringOuterRadius), 
+    ringTexture(ringTexture) {
         
     rotation = 0.0f;
     // Create sphere geometry
@@ -551,6 +621,41 @@ Planet::Planet(float radius, float orbitRadius, float rotationSpeed, float orbit
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
     glEnableVertexAttribArray(2);
     
+    // If this planet has rings, create the ring geometry
+    if (hasRings) {
+        std::vector<float> ringVertices;
+        std::vector<unsigned int> ringIndices;
+        createRing(ringInnerRadius, ringOuterRadius, 100, ringVertices, ringIndices);
+        ringIndexCount = ringIndices.size();
+        
+        // Create VAO, VBO, and EBO for the ring
+        glGenVertexArrays(1, &ringVAO);
+        glGenBuffers(1, &ringVBO);
+        glGenBuffers(1, &ringEBO);
+        
+        glBindVertexArray(ringVAO);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, ringVBO);
+        glBufferData(GL_ARRAY_BUFFER, ringVertices.size() * sizeof(float), 
+                    &ringVertices[0], GL_STATIC_DRAW);
+        
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ringEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, ringIndices.size() * sizeof(unsigned int), 
+                    &ringIndices[0], GL_STATIC_DRAW);
+        
+        // Vertex positions
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        // Vertex normals
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        // Vertex texture coords
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+        glEnableVertexAttribArray(2);
+        
+        std::cout << "Created rings for planet: " << ringIndexCount << " indices" << std::endl;
+    }
+
     glBindVertexArray(0);
     
     std::cout << "Planet created: VAO=" << VAO << ", texture=" << texture << ", indices=" << indexCount << std::endl;
@@ -562,6 +667,12 @@ Planet::~Planet() {
     glDeleteBuffers(1, &VBO);
     glDeleteBuffers(1, &EBO);
     glDeleteTextures(1, &texture);
+    // Clean up ring resources if present
+    if (hasRings) {
+        glDeleteVertexArrays(1, &ringVAO);
+        glDeleteBuffers(1, &ringVBO);
+        glDeleteBuffers(1, &ringEBO);
+    }
 }
 
 // Update planet position based on orbit
@@ -614,6 +725,48 @@ void Planet::draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection,
     // Draw planet
     glBindVertexArray(VAO);
     glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
+
+    if (hasRings) {
+        // Create ring model matrix - starting from planet's position
+        glm::mat4 ringModel = glm::mat4(1.0f);
+        ringModel = glm::translate(ringModel, position);
+        ringModel = glm::rotate(ringModel, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+        
+        // Apply proper orientation for rings
+        // First rotate to align ring plane with planetary system plane
+        ringModel = glm::rotate(ringModel, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+        
+        // Apply axial tilt
+        ringModel = glm::rotate(ringModel, glm::radians(axialTilt), glm::vec3(1.0f, 0.0f, 0.0f));
+        
+        // Set ring model matrix
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, 
+                          glm::value_ptr(ringModel));
+        
+        // Tell shader this is a ring (if you want special handling)
+        glUniform1i(glGetUniformLocation(shaderProgram, "isRing"), 1);
+        
+        // Enable alpha blending for transparency
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        
+        // Disable face culling for double-sided rings
+        glDisable(GL_CULL_FACE);
+        
+        // Bind ring texture
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, ringTexture);
+        
+        // Draw rings as triangle strip
+        glBindVertexArray(ringVAO);
+        glDrawElements(GL_TRIANGLE_STRIP, ringIndexCount, GL_UNSIGNED_INT, 0);
+        
+        // Reset states
+        glEnable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        glUniform1i(glGetUniformLocation(shaderProgram, "isRing"), 0);
+    }
+
     glBindVertexArray(0);
 }
 
@@ -728,6 +881,7 @@ int main() {
     GLuint saturnTexture = loadTexture("saturn.jpg");
     GLuint uranusTexture = loadTexture("uranus.jpg");
     GLuint neptuneTexture = loadTexture("neptune.jpg");
+    GLuint saturnRingTexture = loadTexture("saturn_ring.png");
     pauseTexture = loadTexture("pause-solid.png");
     playTexture = loadTexture("play-solid.png");
     forwardTexture = loadTexture("forward-solid.png");
@@ -736,10 +890,11 @@ int main() {
     planets.push_back(new Planet(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.5f, sunTexture));
     planets.push_back(new Planet(0.1f, 2.0f, 0.3f, 4.77f, 0.0f, 0.0f, mercuryTexture));
     planets.push_back(new Planet(0.19f, 2.75f, 0.5f, 1.87f, 0.0f, 0.0f, venusTexture));
-    planets.push_back(new Planet(0.2f, 3.0f, 0.5f, 1.15f, 0.0f, 0.0f, earthTexture));
-    planets.push_back(new Planet(0.15f, 3.8f, 0.4f, 0.61f, 0.0f, 0.0f, marsTexture));
+    planets.push_back(new Planet(0.2f, 3.35f, 0.5f, 1.15f, 0.0f, 0.0f, earthTexture));
+    planets.push_back(new Planet(0.15f, 4.5f, 0.4f, 0.61f, 0.0f, 0.0f, marsTexture));
     planets.push_back(new Planet(0.7f, 7.0f, 0.6f, 0.097f, 0.0f, 0.0f, jupiterTexture));
-    planets.push_back(new Planet(0.63f, 10.0f, 0.7f, 0.039f, 0.0f, 0.0f, saturnTexture));
+    planets.push_back(new Planet(0.63f, 10.0f, 0.7f, 0.039f, 0.0f, 0.0f, saturnTexture,
+    true, 0.7f, 1.2f, saturnRingTexture));
     planets.push_back(new Planet(0.33f, 17.0f, 0.8f, 0.0137f, 0.0f, 0.0f, uranusTexture));
     planets.push_back(new Planet(0.3f, 30.0f, 0.9f, 0.007f, 0.0f, 0.0f, neptuneTexture));
 
