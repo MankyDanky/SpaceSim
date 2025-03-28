@@ -1,5 +1,4 @@
 vendor/
-Makefile.local
 main
 *.o
 stb_image.h
