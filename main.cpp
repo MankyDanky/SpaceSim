@@ -9,7 +9,7 @@
 #include <vector>
 #include <cmath>
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "vendor/stb/stb_image.h"
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/backends/imgui_impl_glfw.h"
 #include "vendor/imgui/backends/imgui_impl_opengl3.h"

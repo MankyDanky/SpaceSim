@@ -3,3 +3,5 @@ Makefile.local
 main
 *.o
 stb_image.h
+.vscode/
+Makefile
