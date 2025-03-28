@@ -1,1 +1,4 @@
 vendor/
+Makefile.local
+main
+*.o

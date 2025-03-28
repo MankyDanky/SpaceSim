@@ -18,7 +18,6 @@ uniform bool isOutline = false;
 uniform vec3 outlineColor = vec3(1.0, 1.0, 1.0);
 uniform float outlineAlpha = 1.0;
 uniform float innerRadius = 0.95;
-uniform float outerRadius = 1.0;
 
 void main()
 {
@@ -32,8 +31,7 @@ void main()
             discard;
         }
         
-        // Now calculate angle around the planet for the compass effect
-        // Project normal onto screen-facing plane
+        // Calculate angle around the planet for the compass effect
         vec3 viewDir = normalize(viewPos - FragPos);
         vec3 rightDir = normalize(cross(vec3(0.0, 1.0, 0.0), viewDir));
         vec3 upDir = normalize(cross(viewDir, rightDir));
@@ -44,36 +42,35 @@ void main()
         
         // Calculate angle in radians and convert to degrees
         float angle = degrees(atan(y, x));
-        if (angle < 0.0) angle += 360.0; // Convert to 0-360 range
+        if (angle < 0.0) angle += 360.0;
         
         // Get modulo 90 to repeat every quadrant
         float quadrantAngle = mod(angle, 90.0);
         
         // Width of cardinal direction segments (adjust as needed)
-        float cardinalWidth = 30.0; // Width in degrees
+        float cardinalWidth = 30.0; 
         
         // Discard diagonal segments
         if (quadrantAngle > cardinalWidth && quadrantAngle < (90.0 - cardinalWidth)) {
-            discard; // This creates gaps at the diagonals
+            discard;
         }
         
         // For the remaining fragments, render the outline
         FragColor = vec4(outlineColor, outlineAlpha);
-        BloomColor = vec4(0.0, 0.0, 0.0, 1.0); // Set to black (no bloom)
+        BloomColor = vec4(0.0, 0.0, 0.0, 1.0); 
         return;
     }
 
-    // Regular rendering below (unchanged)
-    // ambient
+    // Regular rendering below
     vec3 ambient = ambientStrength * lightColor;
 
-    // diffuse
+    // Diffuse
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * lightColor;
 
-    // specular
+    // Specular
     float specularStrength = 0.5;
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
@@ -81,10 +78,10 @@ void main()
     float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
     vec3 specular = specularStrength * spec * lightColor;
 
-    // emission
+    // Emission
     vec3 emission = texture(texture1, TexCoords).rgb * emissionStrength;
 
-    // final color
+    // Final color
     vec3 result = (ambient + diffuse + specular + emission) * texture(texture1, TexCoords).rgb;
     FragColor = vec4(result, 1.0f);
 

@@ -8,12 +8,11 @@ uniform bool horizontal;
 float spreadBlur = 5.0f;
 float bloomIntensity = 1.2;
 
-// How far from the center to take samples
 const int MAX_RADIUS = 20;
 
 void main()
 {             
-    // Calculate effective radius based on spread (min 5, max MAX_RADIUS)
+    // Calculate effective radius based on spread
     int radius = min(max(int(ceil(spreadBlur * 3.0)), 5), MAX_RADIUS);
     
     // Calculate the weights using the Gaussian equation
@@ -28,7 +27,7 @@ void main()
     for (int i = 1; i < radius; i++) {
         float x = float(i) / spreadBlur;
         weights[i] = exp(-0.5 * x * x);
-        weightSum += weights[i] * 2.0; // Multiplied by 2 for left and right samples
+        weightSum += weights[i] * 2.0;
     }
     
     // Normalize weights so they sum to 1.0

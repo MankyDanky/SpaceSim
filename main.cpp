@@ -13,12 +13,16 @@
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/backends/imgui_impl_glfw.h"
 #include "vendor/imgui/backends/imgui_impl_opengl3.h"
+#include "planet.h"
+#include "texture.h"
+#include "objects.h"
+#include "shader.h"
 
 int SCR_WIDTH = 800;
 int SCR_HEIGHT = 600;
 
-int focusedPlanetIndex = -1; // Default is -1 (sun)
-int hoveredPlanetIndex = -1; // Default is -1 (no planet)
+int focusedPlanetIndex = 0;
+int hoveredPlanetIndex = -1; 
 bool followingPlanet = false;
 
 glm::mat4 currentView;
@@ -26,98 +30,33 @@ glm::mat4 currentProjection;
 
 // Simulation speed control
 float simulationTime = 0.0f;
-float timeScale = 1.0f;      // 1.0 = normal speed, 2.0 = double speed, 0.0 = paused
+float timeScale = 1.0f;
 bool isPaused = false;  
 GLuint pauseTexture, playTexture, forwardTexture;
 
-// Add these to your global variables
-glm::vec3 currentOrbitCenter(0.0f);  // Current camera target position
-glm::vec3 targetOrbitCenter(0.0f);   // Target position we're moving towards
-float transitionSpeed = 4.0f;        // Speed of camera transition (adjust as needed)
-bool inTransition = false;           // Whether we're currently in transition
+// Camera settings
+glm::vec3 currentOrbitCenter(0.0f); 
+glm::vec3 targetOrbitCenter(0.0f);
+float transitionSpeed = 4.0f;
+bool inTransition = false;
+float cameraDistance = 10.0f;
+float lastX = 400, lastY = 300;
+float yaw = 0.0f;
+float pitch = 0.0f;
+bool firstMouse = true;
+bool orbitActive = false; 
 
-// 2. Create a helper function to get planet names
-std::string getPlanetName(int index) {
-    if (index == -1) return "Sun";
-    
-    switch(index) {
-        case 0: return "Sun";
-        case 1: return "Mercury";
-        case 2: return "Venus";
-        case 3: return "Earth";
-        case 4: return "Mars";
-        case 5: return "Jupiter";
-        case 6: return "Saturn";
-        case 7: return "Uranus";
-        case 8: return "Neptune";
-        default: return "Unknown";
-    }
-}
-
-// Forward declaration for the Planet class
-class Planet {
-    public:
-        // Member variables
-        GLuint VAO, VBO, EBO;
-        GLuint texture;
-        float radius;
-        float orbitRadius;
-        float rotationSpeed;
-        float rotation;
-        float orbitalSpeed;
-        float axialTilt;
-        float emissionStrength;
-        glm::vec3 position;
-        unsigned int indexCount;
-       
-        // Add these new ring-related variables
-        bool hasRings;
-        GLuint ringVAO, ringVBO, ringEBO;
-        GLuint ringTexture;
-        float ringInnerRadius;
-        float ringOuterRadius;
-        unsigned int ringIndexCount;
-
-         // Constructor
-         Planet(float radius, float orbitRadius, float rotationSpeed, float orbitalSpeed, 
-            float axialTilt, float emissionStrength, GLuint texture,
-            bool hasRings = false, float ringInnerRadius = 0.0f, 
-            float ringOuterRadius = 0.0f, GLuint ringTexture = 0);
-        
-        // Destructor
-        ~Planet();
-        
-        // Update planet position based on orbit
-        void update(float currentTime);
-        
-        // Draw planet
-        void draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection, 
-                  glm::vec3 viewPos, glm::vec3 lightPos);
-        
-        void drawOutline(GLuint shaderProgram);
-    };
-
-// Vector to hold pointers to planets
-std::vector<Planet*> planets; // std::vector<Planet> planets;
+std::vector<Planet*> planets;
 
 unsigned int postProcessingFBO, rbo;
 unsigned int postProcessingTexture, bloomTexture;
 unsigned int skyboxFBO, skyboxTexture;
 unsigned int pingpongFBO[2], pingpongBuffer[2];
 
-float deltaTime = 0.0f;	// Time between current frame and last frame
-float lastFrame = 0.0f; // Time of last frame
+float deltaTime = 0.0f;	
+float lastFrame = 0.0f;
 
-float cameraDistance = 10.0f;
-float lastX = 400, lastY = 300; // Initial mouse position
-float yaw = 0.0f;               // Horizontal rotation angle
-float pitch = 0.0f;             // Vertical rotation angle
-bool firstMouse = true;         // First mouse input flag
-bool orbitActive = false;       // Orbit mode flag
-
-// Shader loading utility functions
-GLuint loadShader(const char* path, GLenum shaderType);
-GLuint createShaderProgram(const char* vertexPath, const char* fragmentPath);
+// Callback functions
 void processInput(GLFWwindow* window);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
@@ -133,9 +72,6 @@ void recreateFramebuffers(int width, int height) {
     glDeleteTextures(1, &skyboxTexture);
     glDeleteFramebuffers(2, pingpongFBO);
     glDeleteTextures(2, pingpongBuffer);
-
-    
-    
 
     // Create Frame Buffer Object
     glGenFramebuffers(1, &postProcessingFBO);
@@ -201,254 +137,8 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     SCR_HEIGHT = height;
     glViewport(0, 0, width, height);
     
-    // Recreate framebuffers with new size (call this function we'll define below)
+    // Recreate framebuffers with new size
     recreateFramebuffers(width, height);
-}
-
-unsigned int skyboxVAO = 0, skyboxVBO = 0;
-void setupSkybox() {
-    float skyboxVertices[] = {
-        // positions          
-        -1.0f,  1.0f, -1.0f,
-        -1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,
-         1.0f,  1.0f, -1.0f,
-        -1.0f,  1.0f, -1.0f,
-
-        -1.0f, -1.0f,  1.0f,
-        -1.0f, -1.0f, -1.0f,
-        -1.0f,  1.0f, -1.0f,
-        -1.0f,  1.0f, -1.0f,
-        -1.0f,  1.0f,  1.0f,
-        -1.0f, -1.0f,  1.0f,
-
-         1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,
-
-        -1.0f, -1.0f,  1.0f,
-         1.0f, -1.0f,  1.0f,
-         1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,
-        -1.0f, -1.0f, -1.0f,
-        -1.0f, -1.0f,  1.0f,
-
-        -1.0f,  1.0f, -1.0f,
-         1.0f,  1.0f, -1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-        -1.0f,  1.0f,  1.0f,
-        -1.0f,  1.0f, -1.0f,
-
-        -1.0f, -1.0f,  1.0f,
-        -1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f,
-         1.0f, -1.0f,  1.0f,
-        -1.0f, -1.0f,  1.0f
-    };
-
-    // Create skybox VAO
-    glGenVertexArrays(1, &skyboxVAO);
-    glGenBuffers(1, &skyboxVBO);
-    glBindVertexArray(skyboxVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), &skyboxVertices, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-}
-
-unsigned int loadCubemap(std::vector<std::string> faces) {
-    unsigned int textureID;
-    glGenTextures(1, &textureID);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
-
-    int width, height, nrChannels;
-    for (unsigned int i = 0; i < faces.size(); i++) {
-        unsigned char *data = stbi_load(faces[i].c_str(), &width, &height, &nrChannels, 0);
-        if (data) {
-            // Choose format based on channels
-            GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
-            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 
-                         0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-            stbi_image_free(data);
-        } else {
-            std::cout << "Cubemap texture failed to load at path: " << faces[i] << std::endl;
-            stbi_image_free(data);
-        }
-    }
-    
-    // Use GL_LINEAR_MIPMAP_LINEAR for better quality
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    
-    // Generate mipmaps to reduce artifacts at distance
-    glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
-
-    return textureID;
-}
-
-// Helper function to render a full-screen quad
-unsigned int quadVAO = 0;
-unsigned int quadVBO;
-void renderQuad() {
-    if (quadVAO == 0) {
-        float quadVertices[] = {
-            // positions        // texture coordinates
-            -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
-            -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
-             1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
-             1.0f, -1.0f, 0.0f, 1.0f, 0.0f
-        };
-        
-        // Setup quad VAO
-        glGenVertexArrays(1, &quadVAO);
-        glGenBuffers(1, &quadVBO);
-        glBindVertexArray(quadVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-        
-        // Position attribute
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-        
-        // Texture coordinates attribute
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-    }
-    
-    // Render quad
-    glBindVertexArray(quadVAO);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glBindVertexArray(0);
-}
-
-void createSphere(float radius, int sectorCount, int stackCount, std::vector<float>& vertices, std::vector<unsigned int>& indices) {
-    float x, y, z, xy;                              // vertex position
-    float nx, ny, nz, lengthInv = 1.0f / radius;    // vertex normal
-    float s, t;                                     // vertex texCoord
-
-    float sectorStep = 2 * M_PI / sectorCount;
-    float stackStep = M_PI / stackCount;
-    float sectorAngle, stackAngle;
-
-    for(int i = 0; i <= stackCount; ++i) {
-        stackAngle = M_PI / 2 - i * stackStep;        // starting from pi/2 to -pi/2
-        xy = radius * cosf(stackAngle);             // r * cos(u)
-        z = radius * sinf(stackAngle);              // r * sin(u)
-
-        // Add an extra vertex at the end of each ring to fix the texture seam
-        for(int j = 0; j <= sectorCount; ++j) {
-            sectorAngle = j * sectorStep;           // starting from 0 to 2pi
-
-            // vertex position (x, y, z)
-            x = xy * cosf(sectorAngle);             // r * cos(u) * cos(v)
-            y = xy * sinf(sectorAngle);             // r * cos(u) * sin(v)
-            vertices.push_back(x);
-            vertices.push_back(y);
-            vertices.push_back(z);
-
-            // normalized vertex normal (nx, ny, nz)
-            nx = x * lengthInv;
-            ny = y * lengthInv;
-            nz = z * lengthInv;
-            vertices.push_back(nx);
-            vertices.push_back(ny);
-            vertices.push_back(nz);
-            
-
-            s = (float)j / sectorCount;
-            t = (float)i / stackCount;
-            vertices.push_back(s);
-            vertices.push_back(t);
-        }
-    }
-
-    // generate CCW index list of sphere triangles
-    int k1, k2;
-    for(int i = 0; i < stackCount; ++i) {
-        k1 = i * (sectorCount + 1);     // beginning of current stack
-        k2 = k1 + sectorCount + 1;      // beginning of next stack
-
-        for(int j = 0; j < sectorCount; ++j, ++k1, ++k2) {
-            // 2 triangles per sector excluding first and last stacks
-            if(i != 0) {
-                indices.push_back(k1);
-                indices.push_back(k2);
-                indices.push_back(k1 + 1);
-            }
-
-            if(i != (stackCount-1)) {
-                indices.push_back(k1 + 1);
-                indices.push_back(k2);
-                indices.push_back(k2 + 1);
-            }
-        }
-    }
-}
-
-void createRing(float innerRadius, float outerRadius, int segments, 
-    std::vector<float>& vertices, std::vector<unsigned int>& indices) {
-    vertices.clear();
-    indices.clear();
-
-    float x, y, z;
-    float s, t;
-    float segmentStep = 2.0f * M_PI / segments;
-
-    // Generate vertices
-    for (int i = 0; i <= segments; i++) {
-        float angle = i * segmentStep;
-        float cosA = cos(angle);
-        float sinA = sin(angle);
-
-        // Inner vertex
-        x = innerRadius * cosA;
-        z = innerRadius * sinA;
-        y = 0.0f; // Flat ring
-
-        // Position
-        vertices.push_back(x);
-        vertices.push_back(y);
-        vertices.push_back(z);
-
-        // Normal (pointing up for lighting)
-        vertices.push_back(0.0f);
-        vertices.push_back(1.0f);
-        vertices.push_back(0.0f);
-
-        // Texcoord (radial mapping)
-        vertices.push_back(0.07f); // Inner edge
-        vertices.push_back(static_cast<float>(i) / segments);
-
-        // Outer vertex
-        x = outerRadius * cosA;
-        z = outerRadius * sinA;
-        y = 0.0f;
-
-        vertices.push_back(x);
-        vertices.push_back(y);
-        vertices.push_back(z);
-
-        vertices.push_back(0.0f);
-        vertices.push_back(1.0f);
-        vertices.push_back(0.0f);
-
-        vertices.push_back(1.0f); // Outer edge
-        vertices.push_back(static_cast<float>(i) / segments);
-    }
-
-    // Generate indices for triangle strip
-    for (int i = 0; i < segments * 2 + 2; i++) {
-        indices.push_back(i);
-    }
 }
 
 // Add this function after createSphere
@@ -470,8 +160,7 @@ bool ray_sphere_intersection(const glm::vec3& rayOrigin, const glm::vec3& rayDir
 }
 
 // Function to find which planet was clicked
-int findClickedPlanet(GLFWwindow* window, const glm::mat4& view, const glm::mat4& projection,
-    const std::vector<Planet*>& planets) {
+int findClickedPlanet(GLFWwindow* window, const glm::mat4& view, const glm::mat4& projection, const std::vector<Planet*>& planets) {
     // Get mouse position
     double mouseX, mouseY;
     glfwGetCursorPos(window, &mouseX, &mouseY);
@@ -524,270 +213,6 @@ void updateHoveredPlanet(GLFWwindow* window, const glm::mat4& view, const glm::m
     hoveredPlanetIndex = findClickedPlanet(window, view, projection, planets);
 }
 
-GLuint loadTexture(const std::string& path) {
-    // Debug output
-    std::cout << "Loading texture: " << path << std::endl;
-    
-    // Load image data
-    int width, height, channels;
-    unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
-    
-    if (!data) {
-        std::cerr << "Failed to load texture: " << path << std::endl;
-        std::cerr << "Reason: " << stbi_failure_reason() << std::endl;
-        
-        // Create a default color texture for missing files
-        unsigned char defaultColor[4] = {255, 0, 0, 255}; // Red
-        GLuint textureID;
-        glGenTextures(1, &textureID);
-        glBindTexture(GL_TEXTURE_2D, textureID);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, defaultColor);
-        return textureID;
-    }
-    
-    // Determine format based on channels
-    GLenum format;
-    if (channels == 1)
-        format = GL_RED;
-    else if (channels == 3)
-        format = GL_RGB;
-    else if (channels == 4)
-        format = GL_RGBA;
-    else {
-        std::cerr << "Unsupported number of channels: " << channels << std::endl;
-        stbi_image_free(data);
-        return 0;
-    }
-    
-    // Create and configure texture
-    GLuint textureID;
-    glGenTextures(1, &textureID);
-    glBindTexture(GL_TEXTURE_2D, textureID);
-    
-    // Load data into texture
-    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-    glGenerateMipmap(GL_TEXTURE_2D);
-    
-    // Set texture parameters
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    
-    // Free image data
-    stbi_image_free(data);
-    
-    std::cout << "Texture loaded with ID: " << textureID << std::endl;
-    return textureID;
-}
-        
-// Constructor
-Planet::Planet(float radius, float orbitRadius, float rotationSpeed, float orbitalSpeed, 
-    float axialTilt, float emissionStrength, GLuint texture,
-    bool hasRings, float ringInnerRadius, float ringOuterRadius, GLuint ringTexture)
-    : radius(radius), orbitRadius(orbitRadius), rotationSpeed(rotationSpeed),
-    orbitalSpeed(orbitalSpeed), axialTilt(axialTilt), emissionStrength(emissionStrength),
-    position(glm::vec3(orbitRadius, 0.0f, 0.0f)), texture(texture),
-    hasRings(hasRings), ringInnerRadius(ringInnerRadius), ringOuterRadius(ringOuterRadius), 
-    ringTexture(ringTexture) {
-        
-    rotation = 0.0f;
-    // Create sphere geometry
-    std::vector<float> vertices;
-    std::vector<unsigned int> indices;
-    createSphere(radius, 36, 18, vertices, indices);
-    indexCount = indices.size();
-    
-    // Create VAO, VBO, and EBO
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
-    
-    glBindVertexArray(VAO);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), &vertices[0], GL_STATIC_DRAW);
-    
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
-    
-    // Vertex positions
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    // Vertex normals
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    // Vertex texture coords
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-    
-    // If this planet has rings, create the ring geometry
-    if (hasRings) {
-        std::vector<float> ringVertices;
-        std::vector<unsigned int> ringIndices;
-        createRing(ringInnerRadius, ringOuterRadius, 100, ringVertices, ringIndices);
-        ringIndexCount = ringIndices.size();
-        
-        // Create VAO, VBO, and EBO for the ring
-        glGenVertexArrays(1, &ringVAO);
-        glGenBuffers(1, &ringVBO);
-        glGenBuffers(1, &ringEBO);
-        
-        glBindVertexArray(ringVAO);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, ringVBO);
-        glBufferData(GL_ARRAY_BUFFER, ringVertices.size() * sizeof(float), 
-                    &ringVertices[0], GL_STATIC_DRAW);
-        
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ringEBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, ringIndices.size() * sizeof(unsigned int), 
-                    &ringIndices[0], GL_STATIC_DRAW);
-        
-        // Vertex positions
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        // Vertex normals
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-        // Vertex texture coords
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        
-        std::cout << "Created rings for planet: " << ringIndexCount << " indices" << std::endl;
-    }
-
-    glBindVertexArray(0);
-    
-    std::cout << "Planet created: VAO=" << VAO << ", texture=" << texture << ", indices=" << indexCount << std::endl;
-}
-        
-        // Destructor
-Planet::~Planet() {
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
-    glDeleteTextures(1, &texture);
-    // Clean up ring resources if present
-    if (hasRings) {
-        glDeleteVertexArrays(1, &ringVAO);
-        glDeleteBuffers(1, &ringVBO);
-        glDeleteBuffers(1, &ringEBO);
-    }
-}
-
-// Update planet position based on orbit
-void Planet::update(float currentTime) {
-    // Update position based on orbital movement
-    float angle = currentTime * orbitalSpeed;
-    position.x = cosf(angle) * orbitRadius;
-    position.z = sinf(angle) * orbitRadius;
-    rotation = currentTime * rotationSpeed;
-}
-
-// Draw planet
-void Planet::draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection, 
-            glm::vec3 viewPos, glm::vec3 lightPos) {
-
-    glUseProgram(shaderProgram);
-    
-    // Set emission strength (for sun vs planets)
-    glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), emissionStrength);
-    
-    // Create model matrix
-    glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, position);
-   
-    // First rotate to align rotation axis properly (90 degrees around X-axis)
-    model = glm::rotate(model, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-
-    // Apply axial tilt
-    model = glm::rotate(model, glm::radians(axialTilt), glm::vec3(1.0f, 0.0f, 0.0f));
-    
-    // Apply self-rotation
-    model = glm::rotate(model, rotation, glm::vec3(0.0f, 0.0f, 1.0f));
-    
-    // Set uniforms
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-    
-    // Set lighting uniforms
-    glUniform3fv(glGetUniformLocation(shaderProgram, "lightPos"), 1, glm::value_ptr(lightPos));
-    glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, glm::value_ptr(viewPos));
-    glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
-    glUniform1f(glGetUniformLocation(shaderProgram, "ambientStrength"), 0.1f);
-    
-    // Bind texture
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
-    
-    // Draw planet
-    glBindVertexArray(VAO);
-    glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
-
-    if (hasRings) {
-        // Create ring model matrix - starting from planet's position
-        glm::mat4 ringModel = glm::mat4(1.0f);
-        ringModel = glm::translate(ringModel, position);
-        ringModel = glm::rotate(ringModel, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-        
-        // Apply proper orientation for rings
-        // First rotate to align ring plane with planetary system plane
-        ringModel = glm::rotate(ringModel, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-        
-        // Apply axial tilt
-        ringModel = glm::rotate(ringModel, glm::radians(axialTilt), glm::vec3(1.0f, 0.0f, 0.0f));
-        
-        // Set ring model matrix
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, 
-                          glm::value_ptr(ringModel));
-        
-        // Tell shader this is a ring (if you want special handling)
-        glUniform1i(glGetUniformLocation(shaderProgram, "isRing"), 1);
-        
-        // Enable alpha blending for transparency
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        
-        // Disable face culling for double-sided rings
-        glDisable(GL_CULL_FACE);
-        
-        // Bind ring texture
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, ringTexture);
-        
-        // Draw rings as triangle strip
-        glBindVertexArray(ringVAO);
-        glDrawElements(GL_TRIANGLE_STRIP, ringIndexCount, GL_UNSIGNED_INT, 0);
-        
-        // Reset states
-        glEnable(GL_CULL_FACE);
-        glDisable(GL_BLEND);
-        glUniform1i(glGetUniformLocation(shaderProgram, "isRing"), 0);
-    }
-
-    glBindVertexArray(0);
-}
-
-// And implement it
-void Planet::drawOutline(GLuint shaderProgram) {
-    // Bind VAO but override color/texture with solid white
-    glBindVertexArray(VAO);
-    
-    // Set outline color to white
-    glUniform3f(glGetUniformLocation(shaderProgram, "outlineColor"), 1.0f, 1.0f, 1.0f);
-    glUniform1i(glGetUniformLocation(shaderProgram, "isOutline"), 1); // Add this uniform to your shader
-    
-    // Draw the outline
-    glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
-    
-    // Reset outline flag
-    glUniform1i(glGetUniformLocation(shaderProgram, "isOutline"), 0);
-    
-    glBindVertexArray(0);
-}
-
 int main() {
     // Initialize GLFW
     if (!glfwInit()) {
@@ -835,7 +260,7 @@ int main() {
     ImGuiIO& io = ImGui::GetIO();
 
     // Load a custom font
-    ImFont* customFont = io.Fonts->AddFontFromFileTTF("Orbitron-VariableFont_wght.ttf", 32.0f);
+    ImFont* customFont = io.Fonts->AddFontFromFileTTF("fonts/Orbitron-VariableFont_wght.ttf", 32.0f);
     if (!customFont) {
         std::cout << "Failed to load custom font!" << std::endl;
         // Fall back to default font
@@ -844,7 +269,6 @@ int main() {
     // Build font atlas
     ImGui_ImplOpenGL3_CreateFontsTexture();
 
-    // Enable depth test
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);     // Only render front-facing triangles
@@ -852,13 +276,17 @@ int main() {
     glEnable(GL_STENCIL_TEST);  
 
     // Load shaders
-    GLuint shaderProgram = createShaderProgram("vertex_shader.glsl", "fragment_shader.glsl");
-    GLuint blurProgram = createShaderProgram("finalComposite.vert", "blur.frag");
-    GLuint finalCompositeProgram = createShaderProgram("finalComposite.vert", "finalComposite.frag");
-    GLuint skyboxShader = createShaderProgram("skybox.vert", "skybox.frag");
+    GLuint shaderProgram = createShaderProgram("shaders/main.vert", "shaders/main.frag");
+    GLuint blurProgram = createShaderProgram("shaders/finalComposite.vert", "shaders/blur.frag");
+    GLuint finalCompositeProgram = createShaderProgram("shaders/finalComposite.vert", "shaders/finalComposite.frag");
+    GLuint skyboxShader = createShaderProgram("shaders/skybox.vert", "shaders/skybox.frag");
 
     // Setup skybox
-    setupSkybox();
+    unsigned int skyboxVAO = 0, skyboxVBO = 0;
+    createSkybox(skyboxVAO, skyboxVBO);
+
+    // Create VAO and VBO for quad
+    unsigned int quadVAO = 0, quadVBO = 0;
 
     // Load cubemap textures for skybox
     std::vector<std::string> faces {
@@ -872,31 +300,31 @@ int main() {
     unsigned int cubemapTexture = loadCubemap(faces);
 
     // Load planet texture
-    GLuint sunTexture = loadTexture("sun.jpg");
-    GLuint mercuryTexture = loadTexture("mercury.jpg");
-    GLuint venusTexture = loadTexture("venus.jpg");
-    GLuint earthTexture = loadTexture("earth.jpg");
-    GLuint marsTexture = loadTexture("mars.jpg");
-    GLuint jupiterTexture = loadTexture("jupiter.jpg");
-    GLuint saturnTexture = loadTexture("saturn.jpg");
-    GLuint uranusTexture = loadTexture("uranus.jpg");
-    GLuint neptuneTexture = loadTexture("neptune.jpg");
-    GLuint saturnRingTexture = loadTexture("saturn_ring.png");
-    pauseTexture = loadTexture("pause-solid.png");
-    playTexture = loadTexture("play-solid.png");
-    forwardTexture = loadTexture("forward-solid.png");
+    GLuint sunTexture = loadTexture("textures/sun.jpg");
+    GLuint mercuryTexture = loadTexture("textures/mercury.jpg");
+    GLuint venusTexture = loadTexture("textures/venus.jpg");
+    GLuint earthTexture = loadTexture("textures/earth.jpg");
+    GLuint marsTexture = loadTexture("textures/mars.jpg");
+    GLuint jupiterTexture = loadTexture("textures/jupiter.jpg");
+    GLuint saturnTexture = loadTexture("textures/saturn.jpg");
+    GLuint uranusTexture = loadTexture("textures/uranus.jpg");
+    GLuint neptuneTexture = loadTexture("textures/neptune.jpg");
+    GLuint saturnRingTexture = loadTexture("textures/saturn_ring.png");
+    pauseTexture = loadTexture("textures/pause.png");
+    playTexture = loadTexture("textures/play.png");
+    forwardTexture = loadTexture("textures/forward.png");
 
     // Create planets
-    planets.push_back(new Planet(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.5f, sunTexture));
-    planets.push_back(new Planet(0.1f, 2.0f, 0.3f, 4.77f, 0.0f, 0.0f, mercuryTexture));
-    planets.push_back(new Planet(0.19f, 2.75f, 0.5f, 1.87f, 0.0f, 0.0f, venusTexture));
-    planets.push_back(new Planet(0.2f, 3.35f, 0.5f, 1.15f, 0.0f, 0.0f, earthTexture));
-    planets.push_back(new Planet(0.15f, 4.5f, 0.4f, 0.61f, 0.0f, 0.0f, marsTexture));
-    planets.push_back(new Planet(0.7f, 7.0f, 0.6f, 0.097f, 0.0f, 0.0f, jupiterTexture));
-    planets.push_back(new Planet(0.63f, 10.0f, 0.7f, 0.039f, 0.0f, 0.0f, saturnTexture,
+    planets.push_back(new Planet("Sun",1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.5f, sunTexture));
+    planets.push_back(new Planet("Mercury",0.1f, 2.0f, 0.3f, 4.77f, 0.0f, 0.0f, mercuryTexture));
+    planets.push_back(new Planet("Venus",0.19f, 2.75f, 0.5f, 1.87f, 0.0f, 0.0f, venusTexture));
+    planets.push_back(new Planet("Earth",0.2f, 3.35f, 0.5f, 1.15f, 0.0f, 0.0f, earthTexture));
+    planets.push_back(new Planet("Mars", 0.15f, 4.5f, 0.4f, 0.61f, 0.0f, 0.0f, marsTexture));
+    planets.push_back(new Planet("Jupiter", 0.7f, 7.0f, 0.6f, 0.097f, 0.0f, 0.0f, jupiterTexture));
+    planets.push_back(new Planet("Saturn", 0.63f, 10.0f, 0.7f, 0.039f, 0.0f, 0.0f, saturnTexture,
     true, 0.7f, 1.2f, saturnRingTexture));
-    planets.push_back(new Planet(0.33f, 17.0f, 0.8f, 0.0137f, 0.0f, 0.0f, uranusTexture));
-    planets.push_back(new Planet(0.3f, 30.0f, 0.9f, 0.007f, 0.0f, 0.0f, neptuneTexture));
+    planets.push_back(new Planet("Uranus", 0.33f, 17.0f, 0.8f, 0.0137f, 0.0f, 0.0f, uranusTexture));
+    planets.push_back(new Planet("Neptune", 0.3f, 30.0f, 0.9f, 0.007f, 0.0f, 0.0f, neptuneTexture));
 
 
     glfwGetFramebufferSize(window, &SCR_WIDTH, &SCR_HEIGHT);
@@ -914,12 +342,7 @@ int main() {
 
         processInput(window);
 
-        // Set uniforms (same as before)
         glm::mat4 model = glm::mat4(1.0f);
-        // Calculate camera position using spherical coordinates
-        // Get orbit center (sun or focused planet)
-        // Replace the current orbit center calculation in your main loop
-        // Get orbit center (sun or focused planet)
         glm::vec3 orbitCenter(0.0f);
         
         // Update target position if following a planet
@@ -929,7 +352,6 @@ int main() {
 
         // Smooth interpolation between current and target positions
         if (glm::distance(currentOrbitCenter, targetOrbitCenter) > 0.01f) {
-            // Non-linear easing function (exponential approach)
             float t = 1.0f - exp(-transitionSpeed * deltaTime);
             currentOrbitCenter = currentOrbitCenter + t * (targetOrbitCenter - currentOrbitCenter);
             inTransition = true;
@@ -947,9 +369,9 @@ int main() {
 
         // Create view matrix looking at the orbit center
         glm::mat4 view = glm::lookAt(
-            glm::vec3(camX, camY, camZ),    // Camera position
-            orbitCenter,                    // Look target (planet or sun)
-            glm::vec3(0.0f, 1.0f, 0.0f)     // Up vector
+            glm::vec3(camX, camY, camZ),
+            orbitCenter,
+            glm::vec3(0.0f, 1.0f, 0.0f) 
         );
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), 
                                       (float)SCR_WIDTH / (float)SCR_HEIGHT, 
@@ -957,11 +379,9 @@ int main() {
         currentView = view;
         currentProjection = projection;
 
-        // PASS 1A: Draw skybox to its own framebuffer
+        // Draw skybox to its own framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, skyboxFBO);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-
-        // Draw skybox
         glDepthFunc(GL_LEQUAL);
         glUseProgram(skyboxShader);
         glm::mat4 skyView = glm::mat4(glm::mat3(view)); // Remove translation
@@ -976,127 +396,102 @@ int main() {
         glDepthFunc(GL_LESS);
 
 
-        // PASS 1B: Draw sun to HDR framebuffer with bloom extraction
+        // Draw sun to HDR framebuffer with bloom extraction
         glBindFramebuffer(GL_FRAMEBUFFER, postProcessingFBO);
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f); // Alpha = 0.0 indicates "no object"
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        // You MUST reset this every time after binding a different framebuffer
         unsigned int attachments[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-        glDrawBuffers(2, attachments); // This is critical!
-
-        // Then draw the sun...
+        glDrawBuffers(2, attachments);
         glUseProgram(shaderProgram);
-        
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-        
         glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 0.0f, 0.0f, 0.0f);
         glUniform3f(glGetUniformLocation(shaderProgram, "viewPos"), camX, camY, camZ);
         glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
         glUniform1f(glGetUniformLocation(shaderProgram, "ambientStrength"), 0.1f);
         glUniform1f(glGetUniformLocation(shaderProgram, "emissionStrength"), 1.5f);
-        
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, sunTexture);  // Bind the actual sun texture
+        glBindTexture(GL_TEXTURE_2D, sunTexture);
         glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
 
         // Update and draw all planets
         if (!isPaused) {
             simulationTime += deltaTime * timeScale;
         }
-        glm::vec3 lightPos(0.0f, 0.0f, 0.0f); // Sun position at origin
+        glm::vec3 lightPos(0.0f, 0.0f, 0.0f); 
 
-        // First, update which planet is hovered BEFORE any drawing
+        // Stencil buffer setup for outline
         updateHoveredPlanet(window, view, projection);
-
-        // Reset stencil buffer
         glStencilMask(0xFF);
         glClear(GL_STENCIL_BUFFER_BIT);
-        
-        // Draw planets with stencil writing only for the hovered planet
+
         for (size_t i = 0; i < planets.size(); i++) {
             if (!isPaused) {
                 planets[i]->update(simulationTime);
             }
-            // Special handling for hovered planet
+
+            // Set up stencil buffer for outline
             if (i == hoveredPlanetIndex) {
                 glStencilFunc(GL_ALWAYS, 1, 0xFF);
                 glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
                 glStencilMask(0xFF);
             } else {
-                glStencilMask(0x00); // Don't write to stencil buffer
+                glStencilMask(0x00);
             }
             
             planets[i]->draw(shaderProgram, view, projection, 
                         glm::vec3(camX, camY, camZ), lightPos);
         }
 
-        // In your hover rendering code:
         if (hoveredPlanetIndex >= 0 && hoveredPlanetIndex < planets.size()) {
-            // Get planet info
             glm::vec3 planetPos = planets[hoveredPlanetIndex]->position;
-            float planetRadius = planets[hoveredPlanetIndex]->radius;
             
-            // Enable blending
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            
-            // Disable depth testing to make outline visible through planet
             glDisable(GL_DEPTH_TEST);
             
-            // Draw outline with ring effect
+            // Draw outline
             glm::mat4 model = glm::mat4(1.0f);
             model = glm::translate(model, planetPos);
             model = glm::rotate(model, glm::radians(planets[hoveredPlanetIndex]->axialTilt), 
                             glm::vec3(0.0f, 0.0f, 1.0f));
             model = glm::rotate(model, static_cast<float>(glfwGetTime()) * planets[hoveredPlanetIndex]->rotationSpeed, 
                             glm::vec3(0.0f, 1.0f, 0.0f));
-            
-            // Scale slightly larger than planet
             float outlineScale = 1.3f;
             model = glm::scale(model, glm::vec3(outlineScale));
             glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
-            
-            // Set ring parameters - adjust these values to control the ring appearance
             glUniform1i(glGetUniformLocation(shaderProgram, "isOutline"), 1);
             glUniform3f(glGetUniformLocation(shaderProgram, "outlineColor"), 1.0f, 1.0f, 1.0f);
             glUniform1f(glGetUniformLocation(shaderProgram, "outlineAlpha"), 1.0f);
-            glUniform1f(glGetUniformLocation(shaderProgram, "innerRadius"), 0.3f); // Controls gap size
-            glUniform1f(glGetUniformLocation(shaderProgram, "outerRadius"), 0.0f); // Edge of sphere
-            
-            // Draw outline
+            glUniform1f(glGetUniformLocation(shaderProgram, "innerRadius"), 0.3f);
             planets[hoveredPlanetIndex]->drawOutline(shaderProgram);
             
-            // Reset state
             glUniform1i(glGetUniformLocation(shaderProgram, "isOutline"), 0);
             glEnable(GL_DEPTH_TEST);
         }
 
-        // SECOND PASS: Blur the bloom texture using ping-pong
+        // Blur the bloom texture using ping-pong
         bool horizontal = true, first_iteration = true;
         int amount = 10;
         glUseProgram(blurProgram);
         for (unsigned int i = 0; i < amount; i++) {
             glBindFramebuffer(GL_FRAMEBUFFER, pingpongFBO[horizontal]);
-            glClear(GL_COLOR_BUFFER_BIT);  // Clear each ping-pong buffer
+            glClear(GL_COLOR_BUFFER_BIT);
             glUniform1i(glGetUniformLocation(blurProgram, "horizontal"), horizontal);
             
-            // Bind appropriate texture
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, first_iteration ? bloomTexture : pingpongBuffer[!horizontal]);
             glUniform1i(glGetUniformLocation(blurProgram, "image"), 0);
             
-            renderQuad();
+            renderQuad(quadVAO, quadVBO);
             
             horizontal = !horizontal;
             if (first_iteration)
                 first_iteration = false;
         }
 
-
-        // THIRD PASS: Final render to the screen
+        // Final render to the screen
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glUseProgram(finalCompositeProgram);
@@ -1115,13 +510,15 @@ int main() {
         glUniform1i(glGetUniformLocation(finalCompositeProgram, "bloomTex"), 2);
 
         // Render final composite quad
-        renderQuad();
+        renderQuad(quadVAO, quadVBO);
+        
+        // Render ImGui
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        float windowWidth = 200.0f; // Fixed window width
+        float windowWidth = 200.0f;
         ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.25f - windowWidth*0.5f, 15.0f));
-        ImGui::SetNextWindowSize(ImVec2(windowWidth, 0)); // Auto-height
+        ImGui::SetNextWindowSize(ImVec2(windowWidth, 0));
         ImGui::SetNextWindowBgAlpha(0.3f);
 
         ImGuiStyle& style = ImGui::GetStyle();
@@ -1134,11 +531,8 @@ int main() {
         // Begin using custom font
         ImGui::PushFont(customFont);
 
-        // Get the text content
-        std::string planetText = getPlanetName(focusedPlanetIndex);
-
         // Calculate text size
-        ImVec2 textSize = ImGui::CalcTextSize(planetText.c_str());
+        ImVec2 textSize = ImGui::CalcTextSize(planets[focusedPlanetIndex]->name.c_str());
 
         // Calculate position to center text in window
         float textPosX = (windowWidth - textSize.x) * 0.5f;
@@ -1147,33 +541,29 @@ int main() {
         ImGui::SetCursorPosX(textPosX);
 
         // Draw the text
-        ImGui::Text("%s", planetText.c_str());
+        ImGui::Text("%s", planets[focusedPlanetIndex]->name.c_str());
 
         // Return to default font
         ImGui::PopFont();
 
         ImGui::End();
-            
-        // Remove the current speed controls window code and replace with this:
 
-        // 1. Play/Pause Button Window
-        float buttonSize = 40.0f;  // Button size
-        float windowPadding = 15.0f;  // Padding around button
-        float windowSpacing = 0.0f;  // Space between windows
+        // Play/Pause Button Window
+        float buttonSize = 40.0f;
+        float windowPadding = 15.0f;
+        float windowSpacing = 0.0f;
 
         float imageSize = 15.0f;
         int framePadding = 15;
 
-        // 1. Play/Pause Button Window - keep window completely transparent
         ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.5 - buttonSize - windowPadding*2 - windowSpacing - buttonSize - windowPadding*2 - 10, 0));
         ImGui::SetNextWindowSize(ImVec2(buttonSize + windowPadding*2, buttonSize + windowPadding*2));
-        ImGui::SetNextWindowBgAlpha(0.0f); // Keep window transparent
+        ImGui::SetNextWindowBgAlpha(0.0f);
 
-        // Remove window styling but keep variables for button
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f); 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(windowPadding, windowPadding));
 
-        // Apply styling to the buttons - add border
+        // Apply styling to the buttons
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f); // Round button corners
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f); // Add border to button
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.3f)); // Semi-transparent background
@@ -1187,12 +577,12 @@ int main() {
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
             ImGuiWindowFlags_NoBackground);
 
-       // For Play/Pause button:
+       // Play/Pause button
         if (ImGui::ImageButton(isPaused ? "PlayButton" : "PauseButton", 
             (ImTextureID)(uintptr_t)(isPaused ? playTexture : pauseTexture), 
             ImVec2(imageSize, imageSize),
             ImVec2(0, 0), ImVec2(1, 1),
-            ImVec4(0,0,0,0))) {  // Use integer padding value
+            ImVec4(0,0,0,0))) {
             isPaused = !isPaused;
             timeScale = isPaused ? 0.0f : (timeScale >= 2.0f ? 2.0f : 1.0f);
         }
@@ -1202,36 +592,35 @@ int main() {
         ImGui::PopStyleColor(4);
         ImGui::PopStyleVar(5); 
 
-        // 2. Speed Control Button Window - similar changes
+        // Speed Control Button Window
         ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH*0.5 - buttonSize - windowPadding*2 - 10, 0.0f));
         ImGui::SetNextWindowSize(ImVec2(buttonSize + windowPadding*2, buttonSize + windowPadding*2));
-        ImGui::SetNextWindowBgAlpha(0.0f); // Make window fully transparent
+        ImGui::SetNextWindowBgAlpha(0.0f);
 
-        // Remove window styling but keep variables for button
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(windowPadding, windowPadding));
 
         // Apply styling to the buttons
         bool isDoubleSpeed = (timeScale >= 2.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f); // Round button corners
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f); // Add border to button
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
         ImGui::PushStyleColor(ImGuiCol_Button, (isDoubleSpeed? ImVec4(0.256f, 0.53f, 0.96f, 0.5f) : ImVec4(0.0f, 0.0f, 0.0f, 0.3f))); // Semi-transparent backgroun 0.256f, 0.53f, 0.96f       
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (isDoubleSpeed? ImVec4(0.356f, 0.63f, 0.96f, 0.6f) : ImVec4(0.1f, 0.1f, 0.1f, 0.4f))); // Slightly lighter on hover
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, (isDoubleSpeed? ImVec4(0.37f, 0.65f, 0.96f, 0.6f) : ImVec4(0.2f, 0.2f, 0.2f, 0.5f))); // Even lighter when clicked
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.3f)); // White border
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.3f));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(framePadding, framePadding));
 
         ImGui::Begin("Speed Control", nullptr, 
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
-            ImGuiWindowFlags_NoBackground); // Add NoBackground flag
+            ImGuiWindowFlags_NoBackground);
 
-        // 4. Update Speed button similarly
+        // Speed control button
         if (ImGui::ImageButton("SpeedButton", 
             (ImTextureID)(uintptr_t)forwardTexture,
-            ImVec2(imageSize, imageSize),  // Use smaller image size 
+            ImVec2(imageSize, imageSize),
             ImVec2(0,0), ImVec2(1,1),
-            ImVec4(0,0,0,0))) {  // Add padding
+            ImVec4(0,0,0,0))) { 
             isDoubleSpeed = !isDoubleSpeed;
             if (!isPaused) {
                 timeScale = isDoubleSpeed ? 2.0f : 1.0f;
@@ -1245,6 +634,7 @@ int main() {
         style.WindowRounding = oldRounding;
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
         // Swap buffers
         glfwSwapBuffers(window);
         
@@ -1268,56 +658,11 @@ int main() {
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    // 5. Add shutdown code before program termination
+    // Cleanup ImGui
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
     return 0;
-}
-
-GLuint loadShader(const char* path, GLenum shaderType) {
-    std::ifstream shaderFile(path);
-    std::stringstream shaderStream;
-    shaderStream << shaderFile.rdbuf();
-    std::string shaderCode = shaderStream.str();
-    const char* shaderSource = shaderCode.c_str();
-
-    GLuint shader = glCreateShader(shaderType);
-    glShaderSource(shader, 1, &shaderSource, nullptr);
-    glCompileShader(shader);
-
-    int success;
-    char infoLog[512];
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-        std::cerr << "ERROR::SHADER::COMPILATION_FAILED\n" << infoLog << std::endl;
-    }
-
-    return shader;
-}
-
-GLuint createShaderProgram(const char* vertexPath, const char* fragmentPath) {
-    GLuint vertexShader = loadShader(vertexPath, GL_VERTEX_SHADER);
-    GLuint fragmentShader = loadShader(fragmentPath, GL_FRAGMENT_SHADER);
-
-    GLuint shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-
-    int success;
-    char infoLog[512];
-    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-    if (!success) {
-        glGetProgramInfoLog(shaderProgram, 512, nullptr, infoLog);
-        std::cerr << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
-    }
-
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    return shaderProgram;
 }
 
 void processInput(GLFWwindow* window) {
@@ -1345,8 +690,6 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
     if (io.WantCaptureMouse) {
         return;
     }
-    static glm::mat4 lastView;
-    static glm::mat4 lastProjection;
     
     // Store view and projection matrices for click detection
     extern glm::mat4 currentView;
@@ -1376,7 +719,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
     
     // Reset focus to sun with right click
     if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
-        focusedPlanetIndex = -1;
+        focusedPlanetIndex = 0;
         followingPlanet = false;
         targetOrbitCenter = glm::vec3(0.0f); // Set target to sun
         inTransition = true;
@@ -1415,4 +758,3 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     if (pitch > 89.0f) pitch = 89.0f;
     if (pitch < -89.0f) pitch = -89.0f;
 }
-
