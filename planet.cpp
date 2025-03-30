@@ -115,7 +115,7 @@ void Planet::draw(GLuint shaderProgram, glm::mat4 view, glm::mat4 projection,
     model = glm::translate(model, position);
 
     // First rotate to align rotation axis properly (90 degrees around X-axis)
-    model = glm::rotate(model, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    model = glm::rotate(model, glm::radians(270.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 
     // Apply axial tilt
     model = glm::rotate(model, glm::radians(axialTilt), glm::vec3(1.0f, 0.0f, 0.0f));
