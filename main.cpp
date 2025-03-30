@@ -645,7 +645,9 @@ int main() {
 
     // Clean up and exit
     glDeleteProgram(shaderProgram);
-    glDeleteTextures(1, &sunTexture);
+    glDeleteProgram(blurProgram);
+    glDeleteProgram(finalCompositeProgram);
+    glDeleteProgram(skyboxShader);
     glDeleteVertexArrays(1, &quadVAO);
     glDeleteBuffers(1, &quadVBO);
     glDeleteVertexArrays(1, &skyboxVAO);
@@ -656,12 +658,34 @@ int main() {
     }
     planets.clear();
     glfwDestroyWindow(window);
+    glDeleteTextures(1, &postProcessingTexture);
+    glDeleteTextures(1, &bloomTexture);
+    glDeleteTextures(2, pingpongBuffer);
+    glDeleteTextures(1, &pauseTexture);
+    glDeleteTextures(1, &playTexture);
+    glDeleteTextures(1, &forwardTexture);
+    glDeleteFramebuffers(1, &postProcessingFBO);
+    glDeleteFramebuffers(1, &skyboxFBO);
+    glDeleteFramebuffers(2, pingpongFBO);
+    glDeleteRenderbuffers(1, &rbo);
+    glDeleteTextures(1, &sunTexture);
+    glDeleteTextures(1, &mercuryTexture);
+    glDeleteTextures(1, &venusTexture);
+    glDeleteTextures(1, &earthTexture);
+    glDeleteTextures(1, &marsTexture);
+    glDeleteTextures(1, &jupiterTexture);
+    glDeleteTextures(1, &saturnTexture);
+    glDeleteTextures(1, &uranusTexture);
+    glDeleteTextures(1, &neptuneTexture);
+    glDeleteTextures(1, &saturnRingTexture);
     glfwTerminate();
 
     // Cleanup ImGui
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+
+    
     return 0;
 }
 

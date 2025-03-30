@@ -2,7 +2,7 @@
 #include <GL/glew.h>
 
 
-void createSkybox(unsigned int skyboxVAO, unsigned int skyboxVBO) {
+void createSkybox(unsigned int &skyboxVAO, unsigned int &skyboxVBO) {
     float skyboxVertices[] = {
         // positions          
         -1.0f,  1.0f, -1.0f,
@@ -58,7 +58,7 @@ void createSkybox(unsigned int skyboxVAO, unsigned int skyboxVBO) {
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 }
 
-void renderQuad(unsigned int quadVAO, unsigned int quadVBO) {
+void renderQuad(unsigned int &quadVAO, unsigned int &quadVBO) {
     if (quadVAO == 0) {
         float quadVertices[] = {
             // positions        // texture coordinates
@@ -160,7 +160,6 @@ void createRing(float innerRadius, float outerRadius, int segments,
     indices.clear();
 
     float x, y, z;
-    float s, t;
     float segmentStep = 2.0f * M_PI / segments;
 
     // Generate vertices
