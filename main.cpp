@@ -290,12 +290,12 @@ int main() {
 
     // Load cubemap textures for skybox
     std::vector<std::string> faces {
-        "stars/right.png",
-        "stars/left.png",
-        "stars/top.png",
-        "stars/bottom.png",
-        "stars/front.png",
-        "stars/back.png"
+        "textures/right.png",
+        "textures/left.png",
+        "textures/top.png",
+        "textures/bottom.png",
+        "textures/front.png",
+        "textures/back.png"
     };
     unsigned int cubemapTexture = loadCubemap(faces);
 
